@@ -1,1 +1,280 @@
+use rustix::process::Pid;
 
+use super::*;
+use crate::maps::Perms;
+use crate::swath::SwathEntry;
+use crate::value::parse_int;
+
+fn writable_region() -> Region {
+    Region {
+        start: 0x1000,
+        end: 0x2000,
+        perms: Perms {
+            read: true,
+            write: true,
+            exec: false,
+            shared: false,
+        },
+        path: None,
+    }
+}
+
+fn read_only_region() -> Region {
+    Region {
+        start: 0x3000,
+        end: 0x4000,
+        perms: Perms {
+            read: true,
+            write: false,
+            exec: true,
+            shared: false,
+        },
+        path: Some("/usr/bin/x".to_owned()),
+    }
+}
+
+fn equal_to_expr(literal: &str) -> ScanExpr {
+    ScanExpr {
+        data_type: ScanDataType::Integer32,
+        match_type: MatchType::EqualTo,
+        criterion: ScanCriterion::Value(UserValue::Number(parse_int(literal).unwrap())),
+    }
+}
+
+fn empty_session() -> Session {
+    Session {
+        process: None,
+        matches: SwathStore::new(),
+        options: SessionOptions::default(),
+        stop_flag: StopFlag::new(),
+    }
+}
+
+#[test]
+fn region_filter_writable_only_excludes_read_only_regions() {
+    assert!(RegionFilter::WritableOnly.includes(&writable_region()));
+    assert!(!RegionFilter::WritableOnly.includes(&read_only_region()));
+}
+
+#[test]
+fn region_filter_all_includes_every_readable_region() {
+    assert!(RegionFilter::All.includes(&writable_region()));
+    assert!(RegionFilter::All.includes(&read_only_region()));
+}
+
+#[test]
+fn validate_rejects_bytearray_without_a_pattern() {
+    let expr = ScanExpr {
+        data_type: ScanDataType::ByteArray,
+        match_type: MatchType::EqualTo,
+        criterion: ScanCriterion::None,
+    };
+    assert!(matches!(validate(&expr), Err(ScanmemError::InvalidExpr(_))));
+}
+
+#[test]
+fn validate_rejects_string_without_a_pattern() {
+    let expr = ScanExpr {
+        data_type: ScanDataType::String,
+        match_type: MatchType::EqualTo,
+        criterion: ScanCriterion::None,
+    };
+    assert!(matches!(validate(&expr), Err(ScanmemError::InvalidExpr(_))));
+}
+
+#[test]
+fn validate_rejects_range_without_bounds() {
+    let expr = ScanExpr {
+        data_type: ScanDataType::Integer32,
+        match_type: MatchType::Range,
+        criterion: ScanCriterion::None,
+    };
+    assert!(matches!(validate(&expr), Err(ScanmemError::InvalidExpr(_))));
+}
+
+#[test]
+fn validate_accepts_a_well_formed_equal_to_expr() {
+    assert!(validate(&equal_to_expr("42")).is_ok());
+}
+
+#[test]
+fn value_to_bytes_native_matches_to_ne_bytes() {
+    let value = Value::U32(0x0102_0304);
+    assert_eq!(
+        value_to_bytes(&value, Endianness::Native),
+        0x0102_0304u32.to_ne_bytes().to_vec()
+    );
+}
+
+#[test]
+fn value_to_bytes_swapped_reverses_the_bytes() {
+    let value = Value::U32(0x0102_0304);
+    let mut expected = 0x0102_0304u32.to_ne_bytes().to_vec();
+    expected.reverse();
+    assert_eq!(value_to_bytes(&value, Endianness::Swapped), expected);
+}
+
+#[test]
+fn value_to_bytes_bytes_and_str_pass_through_unchanged() {
+    assert_eq!(
+        value_to_bytes(&Value::Bytes(vec![1, 2, 3]), Endianness::Native),
+        vec![1, 2, 3]
+    );
+    assert_eq!(
+        value_to_bytes(&Value::Str("hi".to_owned()), Endianness::Native),
+        b"hi".to_vec()
+    );
+}
+
+#[test]
+fn scan_buffer_finds_a_single_equal_to_match() {
+    let expr = equal_to_expr("42");
+    let bytes = 42i32.to_ne_bytes();
+    let results = scan_buffer(0x1000, &bytes, &expr, Endianness::Native);
+
+    assert_eq!(results.len(), 4);
+    assert_eq!(results[0].0, 0x1000);
+    assert!(!results[0].2.is_empty());
+    // Filler bytes preserve raw content but carry no match flags of their own.
+    assert!(results[1].2.is_empty());
+    assert!(results[2].2.is_empty());
+    assert!(results[3].2.is_empty());
+}
+
+#[test]
+fn scan_buffer_finds_no_matches() {
+    let expr = equal_to_expr("42");
+    let bytes = 7i32.to_ne_bytes();
+    assert!(scan_buffer(0x1000, &bytes, &expr, Endianness::Native).is_empty());
+}
+
+#[test]
+fn scan_buffer_records_overlapping_matches_at_adjacent_addresses() {
+    // Every byte here independently equals 0x11 under Integer8, so each address is its own
+    // match start; scan_buffer must not skip ahead past an earlier match's width.
+    let expr = ScanExpr {
+        data_type: ScanDataType::Integer8,
+        match_type: MatchType::EqualTo,
+        criterion: ScanCriterion::Value(UserValue::Number(parse_int("0x11").unwrap())),
+    };
+    let bytes = [0x11u8, 0x11, 0x11];
+    let results = scan_buffer(0x1000, &bytes, &expr, Endianness::Native);
+
+    let addresses: Vec<usize> = results.iter().map(|(address, _, _)| *address).collect();
+    assert_eq!(addresses, vec![0x1000, 0x1001, 0x1002]);
+    assert!(results.iter().all(|(_, _, flags)| !flags.is_empty()));
+}
+
+#[test]
+fn narrow_swath_keeps_a_match_that_still_equals_the_new_criterion() {
+    let old_swath = Swath {
+        first_byte_in_child: 0x1000,
+        entries: vec![
+            SwathEntry {
+                old_value: 42,
+                flags: MatchFlags::U32 | MatchFlags::S32,
+            },
+            SwathEntry {
+                old_value: 0,
+                flags: MatchFlags::empty(),
+            },
+            SwathEntry {
+                old_value: 0,
+                flags: MatchFlags::empty(),
+            },
+            SwathEntry {
+                old_value: 0,
+                flags: MatchFlags::empty(),
+            },
+        ],
+    };
+    let fresh = 42i32.to_ne_bytes();
+
+    let results = narrow_swath(&old_swath, &fresh, &equal_to_expr("42"), Endianness::Native);
+    assert_eq!(results.len(), 4);
+    assert_eq!(results[0].0, 0x1000);
+    assert!(!results[0].2.is_empty());
+}
+
+#[test]
+fn narrow_swath_drops_a_match_that_no_longer_equals_the_new_criterion() {
+    let old_swath = Swath {
+        first_byte_in_child: 0x1000,
+        entries: vec![
+            SwathEntry {
+                old_value: 42,
+                flags: MatchFlags::U32 | MatchFlags::S32,
+            },
+            SwathEntry {
+                old_value: 0,
+                flags: MatchFlags::empty(),
+            },
+            SwathEntry {
+                old_value: 0,
+                flags: MatchFlags::empty(),
+            },
+            SwathEntry {
+                old_value: 0,
+                flags: MatchFlags::empty(),
+            },
+        ],
+    };
+    let fresh = 7i32.to_ne_bytes();
+
+    let results = narrow_swath(&old_swath, &fresh, &equal_to_expr("42"), Endianness::Native);
+    assert!(results.is_empty());
+}
+
+#[test]
+fn session_matches_and_nth_match_read_the_swath_store() {
+    let mut session = empty_session();
+    session.matches.add(0x1000, 42, MatchFlags::U32);
+    session.matches.add(0x1001, 0, MatchFlags::empty());
+
+    let matches: Vec<MatchView> = session.matches().collect();
+    assert_eq!(matches.len(), 1);
+    assert_eq!(matches[0].address, 0x1000);
+    assert_eq!(matches[0].old_value, 42);
+
+    let first = session.nth_match(0).expect("one match recorded");
+    assert_eq!(first.address, 0x1000);
+    assert!(session.nth_match(1).is_none());
+}
+
+#[test]
+fn session_delete_in_range_reports_how_many_matches_were_removed() {
+    let mut session = empty_session();
+    session.matches.add(0x1000, 42, MatchFlags::U8);
+    session.matches.add(0x2000, 7, MatchFlags::U8);
+
+    let removed = session.delete_in_range(0x1000..0x1001);
+    assert_eq!(removed, 1);
+    assert_eq!(session.matches().count(), 1);
+}
+
+#[test]
+fn session_operations_without_attach_fail_with_not_attached() {
+    let mut session = empty_session();
+    assert!(matches!(
+        session.read(0x1000, 4),
+        Err(ScanmemError::NotAttached)
+    ));
+    assert!(matches!(
+        session.write(0x1000, &Value::U8(1)),
+        Err(ScanmemError::NotAttached)
+    ));
+    assert!(matches!(session.detach(), Err(ScanmemError::NotAttached)));
+}
+
+#[test]
+fn scan_on_a_detached_session_fails_with_not_attached() {
+    let mut session = empty_session();
+    let result = session.scan(&equal_to_expr("42"));
+    assert!(matches!(result, Err(ScanmemError::NotAttached)));
+}
+
+#[test]
+fn attach_to_a_nonexistent_pid_fails() {
+    let pid = Pid::from_raw(i32::MAX - 1).expect("pid literal is non-zero");
+    assert!(Session::attach(pid).is_err());
+}

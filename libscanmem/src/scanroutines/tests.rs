@@ -547,3 +547,28 @@ fn scan_string_rejects_mismatch_and_short_memory() {
     assert_eq!(scan_string(b"help", "hello"), None);
     assert_eq!(scan_string(b"he", "hello"), None);
 }
+
+// --- decode_number. ---
+
+#[test]
+fn decode_number_populates_every_width_that_fits() {
+    let mem = le32(42);
+    let decoded = decode_number(&mem, Endianness::Native);
+    assert_eq!(decoded.u8, Some(42));
+    assert_eq!(decoded.i8, Some(42));
+    assert_eq!(decoded.u16, Some(42));
+    assert_eq!(decoded.i16, Some(42));
+    assert_eq!(decoded.u32, Some(42));
+    assert_eq!(decoded.i32, Some(42));
+    assert_eq!(decoded.f32, Some(f32::from_bits(42)));
+    assert_eq!(decoded.u64, None);
+    assert_eq!(decoded.i64, None);
+    assert_eq!(decoded.f64, None);
+}
+
+#[test]
+fn decode_number_honors_swapped_endianness() {
+    let mem = 0x0102_0304u32.to_be_bytes();
+    let decoded = decode_number(&mem, Endianness::Swapped);
+    assert_eq!(decoded.u32, Some(0x0102_0304));
+}

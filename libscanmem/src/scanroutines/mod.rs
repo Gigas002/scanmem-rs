@@ -271,5 +271,22 @@ pub fn scan_string(memory: &[u8], pattern: &str) -> Option<usize> {
     (memory.len() >= pattern.len() && &memory[..pattern.len()] == pattern).then_some(pattern.len())
 }
 
+/// Decodes every numeric width that fits in `bytes`, for reconstructing a previous scan's raw
+/// bytes into the same [`NumberValue`] shape [`scan`] expects for its `old` parameter.
+pub fn decode_number(bytes: &[u8], endianness: Endianness) -> NumberValue {
+    NumberValue {
+        u8: u8::decode(bytes, endianness),
+        i8: i8::decode(bytes, endianness),
+        u16: u16::decode(bytes, endianness),
+        i16: i16::decode(bytes, endianness),
+        u32: u32::decode(bytes, endianness),
+        i32: i32::decode(bytes, endianness),
+        u64: u64::decode(bytes, endianness),
+        i64: i64::decode(bytes, endianness),
+        f32: f32::decode(bytes, endianness),
+        f64: f64::decode(bytes, endianness),
+    }
+}
+
 #[cfg(test)]
 mod tests;

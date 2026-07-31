@@ -269,10 +269,10 @@ stdout assertion.
 
 ### Phase 6 — `Session` facade
 
-- [ ] `session/`: wire `attach`/`scan`/`snapshot`/`matches`/`nth_match`/`delete_in_range`/`read`/`write`/
+- [x] `session/`: wire `attach`/`scan`/`snapshot`/`matches`/`nth_match`/`delete_in_range`/`read`/`write`/
   `set_option`/`request_stop` on top of Phases 1–5.
-- [ ] `ScanmemError` finalized; no `panic!`/`unwrap()` on attacker- or target-controlled input paths.
-- [ ] End-to-end integration test: attach → scan → narrow → write → verify, all through `Session` only.
+- [x] `ScanmemError` finalized; no `panic!`/`unwrap()` on attacker- or target-controlled input paths.
+- [x] End-to-end integration test: attach → scan → narrow → write → verify, all through `Session` only.
 
 **Verify**: this is the crate's public contract — `cargo doc --workspace --no-deps` renders cleanly;
 `scanmem`/`gameconqueror` plans can start consuming `Session` after this phase.
