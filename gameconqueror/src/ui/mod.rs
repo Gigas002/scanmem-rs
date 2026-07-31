@@ -1,20 +1,23 @@
 //! Ratatui shell: terminal lifecycle (raw mode, alternate screen, panic recovery) and the
 //! top-level event loop. Panel-specific rendering lives in sibling files (`layout.rs`, ...).
 
+mod input;
+mod keymap;
 mod layout;
+mod process_picker;
 
 use std::io;
 use std::process::ExitCode;
 
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
-use ratatui::crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
+use ratatui::crossterm::event::{self, Event};
 use ratatui::crossterm::execute;
 use ratatui::crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
 
-use crate::app::AppState;
+use crate::app::{AppState, Msg};
 use crate::settings::Settings;
 
 /// Enters raw mode + the alternate screen on construction, restores the terminal on drop —
@@ -47,10 +50,11 @@ fn install_panic_hook() {
     }));
 }
 
-/// Runs the `ratatui` shell: a blank frame + status bar, quitting cleanly on `Ctrl+Q`.
+/// Runs the `ratatui` shell: process picker, status bar, quitting cleanly on `Ctrl+Q`.
 pub fn run(state: &mut AppState, settings: &Settings) -> ExitCode {
     let _ = settings;
     install_panic_hook();
+    crate::app::update(state, Msg::RefreshProcessList);
 
     let guard = match TerminalGuard::enter() {
         Ok(guard) => guard,
@@ -80,13 +84,11 @@ fn run_event_loop(state: &mut AppState) -> io::Result<()> {
         terminal.draw(|frame| layout::render(frame, state))?;
 
         if let Event::Key(key) = event::read()? {
-            let is_quit = key.kind == KeyEventKind::Press
-                && key.modifiers.contains(KeyModifiers::CONTROL)
-                && key.code == KeyCode::Char('q');
+            input::handle_key(state, key);
+        }
 
-            if is_quit {
-                break;
-            }
+        if state.should_quit() {
+            break;
         }
     }
 

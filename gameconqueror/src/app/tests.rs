@@ -218,3 +218,109 @@ fn edit_cheat_value_out_of_range_reports_an_error() {
 
     assert_eq!(state.status().unwrap().level, StatusLevel::Error);
 }
+
+#[test]
+fn focus_display_names_match_the_status_bar_labels() {
+    assert_eq!(Focus::ProcessPicker.to_string(), "Process Picker");
+    assert_eq!(Focus::ScanPanel.to_string(), "Scan Panel");
+    assert_eq!(Focus::MatchView.to_string(), "Match View");
+    assert_eq!(Focus::CheatView.to_string(), "Cheat View");
+    assert_eq!(Focus::HexView.to_string(), "Hex View");
+}
+
+#[test]
+fn refresh_process_list_populates_processes_and_reports_a_count() {
+    let mut state = AppState::default();
+
+    update(&mut state, Msg::RefreshProcessList);
+
+    assert!(!state.processes().is_empty());
+    assert_eq!(state.status().unwrap().level, StatusLevel::Info);
+}
+
+#[test]
+fn filter_processes_resets_selection_and_filters_by_substring() {
+    let mut state = AppState::default();
+    update(&mut state, Msg::RefreshProcessList);
+
+    update(
+        &mut state,
+        Msg::FilterProcesses("this-should-not-match-anything-zzz".to_owned()),
+    );
+
+    assert!(state.filtered_processes().is_empty());
+    assert_eq!(state.process_selected(), 0);
+    assert!(state.selected_process().is_none());
+}
+
+#[test]
+fn select_next_and_prev_wrap_around_the_filtered_process_list() {
+    let mut state = AppState::default();
+    update(&mut state, Msg::RefreshProcessList);
+    let len = state.filtered_processes().len();
+    if len < 2 {
+        // Not enough real processes visible in this environment to exercise wraparound.
+        return;
+    }
+
+    update(&mut state, Msg::SelectNext);
+    assert_eq!(state.process_selected(), 1);
+
+    update(&mut state, Msg::SelectPrev);
+    assert_eq!(state.process_selected(), 0);
+
+    update(&mut state, Msg::SelectPrev);
+    assert_eq!(state.process_selected(), len - 1);
+
+    update(&mut state, Msg::SelectNext);
+    assert_eq!(state.process_selected(), 0);
+}
+
+#[test]
+fn select_next_and_prev_are_a_no_op_outside_the_process_picker_focus() {
+    let mut state = AppState::default();
+    update(&mut state, Msg::RefreshProcessList);
+    update(&mut state, Msg::FocusNext);
+    assert_eq!(state.focus(), Focus::ScanPanel);
+
+    update(&mut state, Msg::SelectNext);
+
+    assert_eq!(state.process_selected(), 0);
+}
+
+#[test]
+fn toggle_search_flips_the_flag_each_call() {
+    let mut state = AppState::default();
+
+    update(&mut state, Msg::ToggleSearch);
+    assert!(state.search_active());
+
+    update(&mut state, Msg::ToggleSearch);
+    assert!(!state.search_active());
+}
+
+#[test]
+fn dismiss_cancels_an_active_search_and_clears_the_filter() {
+    let mut state = AppState::default();
+    update(&mut state, Msg::ToggleSearch);
+    update(&mut state, Msg::FilterProcesses("abc".to_owned()));
+
+    update(&mut state, Msg::Dismiss);
+
+    assert!(!state.search_active());
+    assert_eq!(state.process_filter(), "");
+}
+
+#[test]
+fn dismiss_closes_help_before_cancelling_a_pending_search() {
+    let mut state = AppState::default();
+    update(&mut state, Msg::ToggleSearch);
+    update(&mut state, Msg::ShowHelp);
+
+    update(&mut state, Msg::Dismiss);
+    assert!(!state.help_visible());
+    assert!(state.search_active());
+
+    update(&mut state, Msg::Dismiss);
+    assert!(!state.search_active());
+}

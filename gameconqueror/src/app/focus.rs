@@ -37,3 +37,16 @@ impl Focus {
         ORDER[(index + ORDER.len() - 1) % ORDER.len()]
     }
 }
+
+impl std::fmt::Display for Focus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let name = match self {
+            Focus::ProcessPicker => "Process Picker",
+            Focus::ScanPanel => "Scan Panel",
+            Focus::MatchView => "Match View",
+            Focus::CheatView => "Cheat View",
+            Focus::HexView => "Hex View",
+        };
+        f.write_str(name)
+    }
+}

@@ -34,6 +34,17 @@ pub enum Msg {
     /// Write a new value for an existing cheat-list entry, recording it as the entry's stored
     /// value on success.
     EditCheatValue { index: usize, value: Value },
+    /// Rescan `/proc` for the current list of running processes.
+    RefreshProcessList,
+    /// Set the Process Picker's incremental filter query, replacing any previous one.
+    FilterProcesses(String),
+    /// Enter or exit the Process Picker's search-editing mode (`/` to enter, `Enter` to
+    /// confirm-and-exit while active, `Dismiss` to cancel-and-exit clearing the filter).
+    ToggleSearch,
+    /// Move the focused panel's selection forward.
+    SelectNext,
+    /// Move the focused panel's selection backward.
+    SelectPrev,
     /// Cycle the focused panel forward.
     FocusNext,
     /// Cycle the focused panel backward.

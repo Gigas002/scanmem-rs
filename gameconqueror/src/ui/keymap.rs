@@ -1,0 +1,34 @@
+//! Fixed `(Focus, KeyEvent) -> Msg` lookup tables: global bindings active regardless of focus,
+//! and per-focus bindings layered on top. `ui/input.rs` is the only caller; bindings that need
+//! data from `AppState` itself (the currently selected process, an in-progress search query) are
+//! resolved there instead of here.
+
+use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+use crate::app::{Focus, Msg};
+
+/// Looks up a binding active regardless of the current focus.
+pub fn lookup_global(key: KeyEvent) -> Option<Msg> {
+    match (key.code, key.modifiers) {
+        (KeyCode::Tab, KeyModifiers::NONE) => Some(Msg::FocusNext),
+        (KeyCode::BackTab, _) => Some(Msg::FocusPrev),
+        (KeyCode::Char('?'), KeyModifiers::NONE) => Some(Msg::ShowHelp),
+        (KeyCode::F(1), _) => Some(Msg::ShowHelp),
+        (KeyCode::Char('q'), KeyModifiers::CONTROL) => Some(Msg::Quit),
+        (KeyCode::Esc, _) => Some(Msg::Dismiss),
+        _ => None,
+    }
+}
+
+/// Looks up a binding scoped to `focus`, on top of the global bindings.
+pub fn lookup_focus(focus: Focus, key: KeyEvent) -> Option<Msg> {
+    match focus {
+        Focus::ProcessPicker => match (key.code, key.modifiers) {
+            (KeyCode::Up, KeyModifiers::NONE) => Some(Msg::SelectPrev),
+            (KeyCode::Down, KeyModifiers::NONE) => Some(Msg::SelectNext),
+            (KeyCode::Char('/'), KeyModifiers::NONE) => Some(Msg::ToggleSearch),
+            _ => None,
+        },
+        Focus::ScanPanel | Focus::MatchView | Focus::CheatView | Focus::HexView => None,
+    }
+}

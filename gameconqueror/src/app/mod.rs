@@ -4,6 +4,7 @@
 
 mod focus;
 mod msg;
+mod process_list;
 mod state;
 
 use std::process::ExitCode;
@@ -14,7 +15,7 @@ use libscanmem::value::Value;
 
 pub use focus::Focus;
 pub use msg::Msg;
-pub use state::{AppState, CheatEntry, Status, StatusLevel};
+pub use state::{AppState, CheatEntry, ProcessEntry, Status, StatusLevel};
 
 use crate::settings::Settings;
 
@@ -46,6 +47,28 @@ pub fn update(state: &mut AppState, msg: Msg) {
         Msg::RemoveCheat(index) => Some(remove_cheat(state, index)),
         Msg::ToggleFreeze(index) => Some(toggle_freeze(state, index)),
         Msg::EditCheatValue { index, value } => Some(edit_cheat_value(state, index, value)),
+        Msg::RefreshProcessList => Some(refresh_process_list(state)),
+        Msg::FilterProcesses(query) => {
+            state.process_filter = query;
+            state.process_selected = 0;
+            None
+        }
+        Msg::ToggleSearch => {
+            state.search_active = !state.search_active;
+            None
+        }
+        Msg::SelectNext => {
+            if state.focus == Focus::ProcessPicker {
+                select_process(state, 1);
+            }
+            None
+        }
+        Msg::SelectPrev => {
+            if state.focus == Focus::ProcessPicker {
+                select_process(state, -1);
+            }
+            None
+        }
         Msg::FocusNext => {
             state.focus = state.focus.next();
             None
@@ -59,7 +82,13 @@ pub fn update(state: &mut AppState, msg: Msg) {
             None
         }
         Msg::Dismiss => {
-            state.help_visible = false;
+            if state.help_visible {
+                state.help_visible = false;
+            } else if state.search_active {
+                state.search_active = false;
+                state.process_filter.clear();
+                state.process_selected = 0;
+            }
             None
         }
         Msg::Quit => {
@@ -150,6 +179,23 @@ fn edit_cheat_value(state: &mut AppState, index: usize, value: Value) -> Status 
         }
         Err(err) => Status::error(err.to_string()),
     }
+}
+
+fn refresh_process_list(state: &mut AppState) -> Status {
+    state.processes = process_list::list_processes();
+    state.process_selected = 0;
+    Status::info(format!("{} process(es)", state.processes.len()))
+}
+
+/// Moves `state.process_selected` by `delta` (`1` or `-1`), wrapping within the current
+/// filtered-process count; a no-op if the filtered list is empty.
+fn select_process(state: &mut AppState, delta: isize) {
+    let len = state.filtered_processes().len();
+    if len == 0 {
+        return;
+    }
+    let current = state.process_selected as isize;
+    state.process_selected = (current + delta).rem_euclid(len as isize) as usize;
 }
 
 fn with_session(

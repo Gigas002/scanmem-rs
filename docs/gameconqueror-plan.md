@@ -296,10 +296,10 @@ UI compiled in.
 
 ### Phase 2 — Shell, keymap, and process picker
 
-- [ ] `ui/layout.rs`: top-level frame layout, status/help bar showing current focus.
-- [ ] `ui/keymap.rs` + `ui/input.rs`: global bindings (§4.2) wired end-to-end.
-- [ ] `ui/process_picker.rs`: `Table` over `/proc` with incremental `/`-filter.
-- [ ] Wire picker selection → `Msg::Attach` → `app::update`.
+- [x] `ui/layout.rs`: top-level frame layout, status/help bar showing current focus.
+- [x] `ui/keymap.rs` + `ui/input.rs`: global bindings (§4.2) wired end-to-end.
+- [x] `ui/process_picker.rs`: `Table` over `/proc` with incremental `/`-filter.
+- [x] Wire picker selection → `Msg::Attach` → `app::update`.
 
 **Verify**: manual — pick a real process with keys alone, confirm attach succeeds/fails visibly in the
 status bar.
