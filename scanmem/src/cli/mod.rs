@@ -10,6 +10,10 @@ pub struct CliArgs {
     #[arg(long)]
     pub pid: Option<u32>,
 
+    /// Run this `;`-separated command script instead of starting the interactive REPL.
+    #[arg(long)]
+    pub exec: Option<String>,
+
     /// Increase log verbosity; may be repeated (-v, -vv, -vvv).
     #[arg(short, long, action = clap::ArgAction::Count)]
     pub verbose: u8,

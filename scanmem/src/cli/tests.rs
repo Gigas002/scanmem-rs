@@ -13,7 +13,14 @@ fn parses_pid_and_verbose() {
 fn defaults_are_empty() {
     let args = CliArgs::parse_from(["scanmem"]);
     assert_eq!(args.pid, None);
+    assert_eq!(args.exec, None);
     assert_eq!(args.verbose, 0);
+}
+
+#[test]
+fn parses_exec_script() {
+    let args = CliArgs::parse_from(["scanmem", "--exec", "attach 1234;list"]);
+    assert_eq!(args.exec.as_deref(), Some("attach 1234;list"));
 }
 
 #[test]

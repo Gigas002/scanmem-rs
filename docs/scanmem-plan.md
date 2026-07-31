@@ -189,8 +189,8 @@ Repo-wide renaming/licensing/CI fixes are already done.
 
 ### Phase 2 — One-shot scripting + integration tests
 
-- [ ] `app/script.rs`: `--exec '<commands>;...'` runner, same `Command`/`Session` path as the REPL.
-- [ ] `tests/integration.rs`: `assert_cmd` end-to-end tests against `fake_target`.
+- [x] `app/script.rs`: `--exec '<commands>;...'` runner, same `Command`/`Session` path as the REPL.
+- [x] `tests/integration.rs`: `assert_cmd` end-to-end tests against `fake_target`.
 
 **Verify**: `cargo test -p scanmem` green; covers attach/scan/narrow/write/verify without a live terminal.
 
@@ -211,7 +211,7 @@ all three feature levels; dogfood against `fake_target` and a real long-running 
 
 - [ ] `scanmem` depends on `libscanmem::Session` only — no engine logic duplicated.
 - [ ] Clean-slate command grammar documented in README; explicitly not `-c`-compatible.
-- [ ] `assert_cmd` integration tests cover attach/scan/narrow/write/verify against `fake_target`.
+- [x] `assert_cmd` integration tests cover attach/scan/narrow/write/verify against `fake_target`.
 - [ ] No TUI, no `ratatui`/`crossterm` anywhere in this crate's dependency tree.
 - [ ] CI green per [ARCHITECTURE.md §8](./ARCHITECTURE.md#8-quality-gates--required-before-every-commit)
   across `--no-default-features`, default, `--all-features`.

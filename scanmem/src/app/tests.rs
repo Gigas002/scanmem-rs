@@ -74,3 +74,48 @@ fn help_lists_verbs() {
     let mut state = AppState::default();
     assert!(dispatch(&mut state, Command::Help).contains("quit"));
 }
+
+mod script {
+    use std::process::ExitCode;
+
+    use super::AppState;
+    use crate::app::script::run;
+
+    #[test]
+    fn empty_script_succeeds() {
+        assert_eq!(run(AppState::default(), ""), ExitCode::SUCCESS);
+    }
+
+    #[test]
+    fn whitespace_only_segments_are_skipped() {
+        assert_eq!(run(AppState::default(), "  ; ;  "), ExitCode::SUCCESS);
+    }
+
+    #[test]
+    fn unknown_verb_fails() {
+        assert_eq!(run(AppState::default(), "bogus"), ExitCode::FAILURE);
+    }
+
+    #[test]
+    fn dispatch_error_fails() {
+        assert_eq!(run(AppState::default(), "attach 0"), ExitCode::FAILURE);
+    }
+
+    #[test]
+    fn not_attached_dispatch_error_fails() {
+        assert_eq!(run(AppState::default(), "list"), ExitCode::FAILURE);
+    }
+
+    #[test]
+    fn quit_stops_processing_remaining_commands() {
+        assert_eq!(
+            run(AppState::default(), "help; quit; bogus"),
+            ExitCode::SUCCESS
+        );
+    }
+
+    #[test]
+    fn multiple_valid_commands_succeed() {
+        assert_eq!(run(AppState::default(), "help; help"), ExitCode::SUCCESS);
+    }
+}

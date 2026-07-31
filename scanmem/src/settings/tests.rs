@@ -27,3 +27,9 @@ fn cli_verbosity_sets_log_level() {
     let settings = resolve(&cli(&["-vv"]));
     assert_eq!(settings.log_level, LevelFilter::DEBUG);
 }
+
+#[test]
+fn cli_exec_is_resolved() {
+    let settings = resolve(&cli(&["--exec", "attach 1234;list"]));
+    assert_eq!(settings.exec.as_deref(), Some("attach 1234;list"));
+}

@@ -6,11 +6,13 @@ mod commands;
 mod logger;
 mod settings;
 
+use std::process::ExitCode;
+
 use clap::Parser;
 
-fn main() {
+fn main() -> ExitCode {
     let args = cli::CliArgs::parse();
     let settings = settings::resolve(&args);
     logger::init(&settings);
-    app::run(settings);
+    app::run(settings)
 }

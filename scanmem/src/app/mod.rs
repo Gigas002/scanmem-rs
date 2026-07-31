@@ -2,6 +2,9 @@
 //! parsing, no raw config types (only [`Settings`] crosses into this module).
 
 pub mod repl;
+mod script;
+
+use std::process::ExitCode;
 
 use libscanmem::error::ScanmemError;
 use libscanmem::session::Session;
@@ -40,8 +43,9 @@ impl AppState {
     }
 }
 
-/// Runs the interactive REPL, optionally attaching to `settings.pid` first.
-pub fn run(settings: Settings) {
+/// Runs the interactive REPL, or the `--exec` script if `settings.exec` is set, optionally
+/// attaching to `settings.pid` first either way.
+pub fn run(settings: Settings) -> ExitCode {
     let mut state = AppState::default();
 
     if let Some(pid) = settings.pid {
@@ -56,7 +60,13 @@ pub fn run(settings: Settings) {
         }
     }
 
-    repl::run(state);
+    match settings.exec {
+        Some(script) => script::run(state, &script),
+        None => {
+            repl::run(state);
+            ExitCode::SUCCESS
+        }
+    }
 }
 
 #[cfg(test)]

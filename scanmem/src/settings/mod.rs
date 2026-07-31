@@ -11,6 +11,8 @@ use crate::cli::CliArgs;
 pub struct Settings {
     /// Pid to attach to immediately on startup, if any.
     pub pid: Option<Pid>,
+    /// One-shot `;`-separated command script to run instead of the interactive REPL, if any.
+    pub exec: Option<String>,
     /// Level filter for the `tracing` subscriber.
     pub log_level: LevelFilter,
 }
@@ -19,6 +21,7 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             pid: None,
+            exec: None,
             log_level: LevelFilter::WARN,
         }
     }
@@ -33,6 +36,7 @@ pub fn resolve(cli: &CliArgs) -> Settings {
     }
 
     settings.pid = cli.pid.and_then(|raw| Pid::from_raw(raw as i32));
+    settings.exec = cli.exec.clone();
 
     settings
 }
