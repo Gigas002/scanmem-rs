@@ -4,12 +4,22 @@ version.workspace = true
 edition.workspace = true
 license = "GPL-3.0-or-later"
 homepage.workspace = true
-description = "Interactive CLI/TUI front-end for libscanmem"
+description = "Interactive CLI front-end for libscanmem"
 keywords.workspace = true
 repository.workspace = true
 
 [dependencies]
+clap = { version = "4", features = ["derive"] }
 libscanmem = { path = "../libscanmem", version = "0.1.0" }
+rustix = { version = "1", features = ["process"] }
+rustyline = { version = "18", default-features = false, features = ["custom-bindings"] }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = "0.3"
 
 [features]
 default = []
+
+[dev-dependencies]
+assert_cmd = "2"
+predicates = "3"
