@@ -7,7 +7,7 @@ to **`iced`**, both sharing one toolkit-independent core.
 Background analysis: [scanmem/RUST_PORT_ANALYSIS.md](../../scanmem/RUST_PORT_ANALYSIS.md).
 Generic workspace/settings/testing/quality-gate rules: [ARCHITECTURE.md](./ARCHITECTURE.md). Repo-wide
 Sibling plans:
-[libscanmem-plan.md](./libscanmem-plan.md) (engine, must land first), [scanmem-plan.md](./scanmem-plan.md) (CLI/TUI).
+[libscanmem-plan.md](./libscanmem-plan.md) (engine, must land first), [scanmem-plan.md](./scanmem-plan.md) (CLI).
 
 **Priority order for every design call in this plan: code quality > performance > safety > 1:1 behavioral
 compatibility with the Python `GameConqueror`.**
