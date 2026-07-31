@@ -241,9 +241,9 @@ Repo-wide renaming, licensing, and CI fixes are already done. `libscanmem`-speci
 
 ### Phase 4 — Swath storage (safe redesign)
 
-- [ ] `swath/`: `Swath`, `SwathEntry`, `Vec<Swath>`-backed store; `add`, `iter`, `nth_match`,
+- [x] `swath/`: `Swath`, `SwathEntry`, `Vec<Swath>`-backed store; `add`, `iter`, `nth_match`,
   `delete_in_range`, `to_printable_string`/`to_bytearray_text` equivalents.
-- [ ] Property tests (or thorough unit tests) for insertion order, swath-splitting/merging boundaries,
+- [x] Property tests (or thorough unit tests) for insertion order, swath-splitting/merging boundaries,
   `delete_in_range` invariants (matches count stays consistent).
 
 **Verify**: no `unsafe` in this module; `cargo clippy` clean at all three feature levels.

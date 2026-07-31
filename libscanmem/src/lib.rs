@@ -5,6 +5,7 @@ pub mod maps;
 pub mod scanroutines;
 pub mod session;
 pub mod sets;
+pub mod swath;
 pub mod value;
 
 /// Returns a greeting for the given name.
