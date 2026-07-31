@@ -96,10 +96,7 @@ compatibility with the Python `GameConqueror`.**
 gameconqueror/
   src/
     main.rs               # slim entry point: init terminal, run event loop, restore terminal on exit
-    cli/                  # clap: --pid, --config
-      mod.rs
-      tests.rs
-    config/                 # optional TOML: last cheat-list path
+    cli/                  # clap: --pid
       mod.rs
       tests.rs
     settings/
@@ -260,8 +257,8 @@ Generic policy: [ARCHITECTURE.md §7](./ARCHITECTURE.md#7-dependencies).
 | Engine | `libscanmem` | workspace path dependency |
 | TUI | `ratatui` | feature `tui`, default on |
 | Terminal backend | `crossterm` | feature `tui`, default on; cross-platform, pure Rust |
-| CLI | `clap` (derive) | `--pid`, `--config` |
-| Config/persistence | `serde`, `toml` (config), `serde_json` (cheat list, optional) | |
+| CLI | `clap` (derive) | `--pid` |
+| Cheat-list persistence | `serde`, `serde_json` (optional) | |
 | Logging | `tracing`, `tracing-subscriber` | file-only sink; never stdout/stderr while the TUI owns the terminal |
 | Errors | `thiserror` | |
 
@@ -277,7 +274,7 @@ Generic policy: [ARCHITECTURE.md §7](./ARCHITECTURE.md#7-dependencies).
 Repo-wide renaming/licensing/CI fixes, including adding `gameconqueror/` as a new workspace member, are
 already done. `gameconqueror`-specific bootstrap:
 
-- [x] `cli/`, `config/`, `settings/`, `logger/` (file-only sink), empty `app/` and `ui/` skeletons.
+- [x] `cli/`, `settings/`, `logger/` (file-only sink), empty `app/` and `ui/` skeletons.
 - [x] Vertical slice: a `ratatui` shell that draws an empty frame with a status bar and quits cleanly on
   `Ctrl+Q`, restoring the terminal on both normal exit and panic (a `Drop` guard or panic hook around
   `crossterm::terminal::disable_raw_mode`/leaving the alternate screen — a raw terminal left broken on
