@@ -133,3 +133,62 @@ fn attach_scan_narrow_write_and_verify_via_target_stdout() {
     let status = child.wait().expect("fake_target did not exit cleanly");
     assert!(status.success());
 }
+
+#[test]
+#[ignore = "requires CAP_SYS_PTRACE; run manually with `--ignored`"]
+fn scan_panel_run_scan_first_scan_and_narrow_via_typed_input() {
+    let mut child = Command::new(fake_target_path())
+        .stdout(Stdio::piped())
+        .spawn()
+        .expect("failed to spawn fake_target");
+
+    let mut stdout = BufReader::new(child.stdout.take().expect("piped stdout"));
+    let mut address_line = String::new();
+    stdout
+        .read_line(&mut address_line)
+        .expect("failed to read address line");
+    let address: usize = address_line
+        .trim()
+        .parse()
+        .expect("fake_target did not print a valid address");
+
+    let mut state = AppState::default();
+    update(&mut state, Msg::Attach(child.id()));
+    assert!(
+        state.session().is_some(),
+        "attach failed: {:?}",
+        state.status()
+    );
+
+    // Default Scan Panel state is Integer32/EqualTo; `fake_target` seeds 0xdeadbeef. The exact
+    // match count isn't asserted: 0xdeadbeef is a common poison value and may coincidentally
+    // appear elsewhere in the target's writable memory, same as the sibling test above only
+    // checks that the known address is present rather than the total count.
+    update(&mut state, Msg::SetScanInput("0xdeadbeef".to_owned()));
+    update(&mut state, Msg::RunScan);
+    assert_eq!(state.status().unwrap().level, StatusLevel::Info);
+    let matches = state.filtered_matches();
+    assert!(matches.iter().any(|entry| entry.address == address));
+
+    let new_value = 0x1234_5678_u32;
+    update(
+        &mut state,
+        Msg::Write {
+            address,
+            value: Value::U32(new_value),
+        },
+    );
+    assert_eq!(state.status().unwrap().level, StatusLevel::Info);
+
+    update(&mut state, Msg::SetScanInput("0x12345678".to_owned()));
+    update(&mut state, Msg::RunScan);
+    assert_eq!(state.status().unwrap().level, StatusLevel::Info);
+    let narrowed = state.filtered_matches();
+    assert!(narrowed.iter().any(|entry| entry.address == address));
+
+    update(&mut state, Msg::Detach);
+    assert!(state.session().is_none());
+
+    child.kill().expect("failed to kill fake_target");
+    child.wait().expect("fake_target did not exit cleanly");
+}

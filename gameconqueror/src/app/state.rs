@@ -2,7 +2,8 @@
 //! toolkit-independent state the `ui/` shell renders from each frame.
 
 use libscanmem::error::ScanmemError;
-use libscanmem::session::Session;
+use libscanmem::scanroutines::{MatchType, ScanDataType};
+use libscanmem::session::{MatchView, Session};
 use libscanmem::value::Value;
 use rustix::process::Pid;
 
@@ -56,10 +57,29 @@ pub struct ProcessEntry {
     pub name: String,
 }
 
+/// Which column the Match View is currently sorted by.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MatchSortColumn {
+    Address,
+    Value,
+}
+
+impl MatchSortColumn {
+    /// The other column, cycled via `Msg::CycleMatchSort`.
+    #[must_use]
+    pub fn next(self) -> Self {
+        match self {
+            MatchSortColumn::Address => MatchSortColumn::Value,
+            MatchSortColumn::Value => MatchSortColumn::Address,
+        }
+    }
+}
+
 /// Current application state: the attached session (if any), recorded cheats, the Process
-/// Picker's list/filter/selection, the focused panel, help/quit flags, and the last status
-/// message. No `ratatui`/`crossterm` types appear anywhere in this module.
-#[derive(Debug, Default)]
+/// Picker's list/filter/selection, the Scan Panel's data type/match type/value input, the Match
+/// View's sort/filter/selection, the focused panel, help/quit flags, and the last status message.
+/// No `ratatui`/`crossterm` types appear anywhere in this module.
+#[derive(Debug)]
 pub struct AppState {
     pub(super) session: Option<Session>,
     pub(super) cheats: Vec<CheatEntry>,
@@ -67,10 +87,39 @@ pub struct AppState {
     pub(super) process_filter: String,
     pub(super) process_selected: usize,
     pub(super) search_active: bool,
+    pub(super) scan_data_type: ScanDataType,
+    pub(super) scan_match_type: MatchType,
+    pub(super) scan_input: String,
+    pub(super) match_sort: MatchSortColumn,
+    pub(super) match_filter: String,
+    pub(super) match_selected: usize,
     pub(super) focus: Focus,
     pub(super) help_visible: bool,
     pub(super) quit: bool,
     pub(super) status: Option<Status>,
+}
+
+impl Default for AppState {
+    fn default() -> Self {
+        Self {
+            session: None,
+            cheats: Vec::new(),
+            processes: Vec::new(),
+            process_filter: String::new(),
+            process_selected: 0,
+            search_active: false,
+            scan_data_type: ScanDataType::Integer32,
+            scan_match_type: MatchType::EqualTo,
+            scan_input: String::new(),
+            match_sort: MatchSortColumn::Address,
+            match_filter: String::new(),
+            match_selected: 0,
+            focus: Focus::default(),
+            help_visible: false,
+            quit: false,
+            status: None,
+        }
+    }
 }
 
 impl AppState {
@@ -136,6 +185,60 @@ impl AppState {
         self.filtered_processes()
             .into_iter()
             .nth(self.process_selected)
+    }
+
+    pub fn scan_data_type(&self) -> ScanDataType {
+        self.scan_data_type
+    }
+
+    pub fn scan_match_type(&self) -> MatchType {
+        self.scan_match_type
+    }
+
+    pub fn scan_input(&self) -> &str {
+        &self.scan_input
+    }
+
+    pub fn match_sort(&self) -> MatchSortColumn {
+        self.match_sort
+    }
+
+    pub fn match_filter(&self) -> &str {
+        &self.match_filter
+    }
+
+    pub fn match_selected(&self) -> usize {
+        self.match_selected
+    }
+
+    /// The attached session's current match set, filtered by [`Self::match_filter`] (against the
+    /// hex address or decimal value, case-insensitively) and sorted by [`Self::match_sort`].
+    /// Empty if no session is attached.
+    pub fn filtered_matches(&self) -> Vec<MatchView> {
+        let Some(session) = &self.session else {
+            return Vec::new();
+        };
+        let mut matches: Vec<MatchView> = session.matches().collect();
+
+        if !self.match_filter.is_empty() {
+            let needle = self.match_filter.to_lowercase();
+            matches.retain(|entry| {
+                format!("{:#x}", entry.address).contains(&needle)
+                    || entry.old_value.to_string().contains(&needle)
+            });
+        }
+
+        match self.match_sort {
+            MatchSortColumn::Address => matches.sort_by_key(|entry| entry.address),
+            MatchSortColumn::Value => matches.sort_by_key(|entry| entry.old_value),
+        }
+
+        matches
+    }
+
+    /// The match currently highlighted in [`Self::filtered_matches`], if any.
+    pub fn selected_match(&self) -> Option<MatchView> {
+        self.filtered_matches().into_iter().nth(self.match_selected)
     }
 
     /// Attaches to `pid`, replacing any previously attached session, and returns how many

@@ -8,8 +8,9 @@ use crate::ui::keymap;
 
 /// Handles one key event against `state`.
 ///
-/// While the Process Picker's search box is active, printable keys and backspace edit the
-/// filter query directly (composing free-form text can't be expressed as a fixed key table);
+/// While the focused panel's text field is active (the Process Picker's filter, the Scan
+/// Panel's value/range input, or the Match View's filter), printable keys and backspace edit
+/// that field directly (composing free-form text can't be expressed as a fixed key table);
 /// everything else goes through `ui/keymap.rs`, falling back to `Enter` attaching to the
 /// currently selected process.
 pub fn handle_key(state: &mut AppState, key: KeyEvent) {
@@ -17,9 +18,8 @@ pub fn handle_key(state: &mut AppState, key: KeyEvent) {
         return;
     }
 
-    if state.focus() == Focus::ProcessPicker
-        && state.search_active()
-        && let Some(msg) = process_search_msg(state, key)
+    if state.search_active()
+        && let Some(msg) = search_input_msg(state, key)
     {
         app::update(state, msg);
         return;
@@ -40,8 +40,18 @@ pub fn handle_key(state: &mut AppState, key: KeyEvent) {
     }
 }
 
-/// Builds the `Msg` for a key pressed while the Process Picker's search box is active, or `None`
+/// Builds the `Msg` for a key pressed while the focused panel's text field is active, or `None`
 /// if `key` should fall through to the normal global/per-focus lookup instead (`Esc`, `Tab`, …).
+fn search_input_msg(state: &AppState, key: KeyEvent) -> Option<Msg> {
+    match state.focus() {
+        Focus::ProcessPicker => process_search_msg(state, key),
+        Focus::ScanPanel => scan_input_msg(state, key),
+        Focus::MatchView => match_filter_msg(state, key),
+        Focus::CheatView | Focus::HexView => None,
+    }
+}
+
+/// Builds the `Msg` for a key pressed while the Process Picker's search box is active.
 fn process_search_msg(state: &AppState, key: KeyEvent) -> Option<Msg> {
     match key.code {
         KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -53,6 +63,44 @@ fn process_search_msg(state: &AppState, key: KeyEvent) -> Option<Msg> {
             let mut query = state.process_filter().to_owned();
             query.pop();
             Some(Msg::FilterProcesses(query))
+        }
+        KeyCode::Enter => Some(Msg::ToggleSearch),
+        KeyCode::Up => Some(Msg::SelectPrev),
+        KeyCode::Down => Some(Msg::SelectNext),
+        _ => None,
+    }
+}
+
+/// Builds the `Msg` for a key pressed while the Scan Panel's value/range input is active.
+fn scan_input_msg(state: &AppState, key: KeyEvent) -> Option<Msg> {
+    match key.code {
+        KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+            let mut input = state.scan_input().to_owned();
+            input.push(c);
+            Some(Msg::SetScanInput(input))
+        }
+        KeyCode::Backspace => {
+            let mut input = state.scan_input().to_owned();
+            input.pop();
+            Some(Msg::SetScanInput(input))
+        }
+        KeyCode::Enter => Some(Msg::ToggleSearch),
+        _ => None,
+    }
+}
+
+/// Builds the `Msg` for a key pressed while the Match View's filter box is active.
+fn match_filter_msg(state: &AppState, key: KeyEvent) -> Option<Msg> {
+    match key.code {
+        KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+            let mut query = state.match_filter().to_owned();
+            query.push(c);
+            Some(Msg::FilterMatches(query))
+        }
+        KeyCode::Backspace => {
+            let mut query = state.match_filter().to_owned();
+            query.pop();
+            Some(Msg::FilterMatches(query))
         }
         KeyCode::Enter => Some(Msg::ToggleSearch),
         KeyCode::Up => Some(Msg::SelectPrev),

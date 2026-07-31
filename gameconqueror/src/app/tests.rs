@@ -1,3 +1,4 @@
+use libscanmem::scanroutines::{MatchType, ScanDataType};
 use libscanmem::value::Value;
 
 use super::*;
@@ -323,4 +324,159 @@ fn dismiss_closes_help_before_cancelling_a_pending_search() {
 
     update(&mut state, Msg::Dismiss);
     assert!(!state.search_active());
+}
+
+#[test]
+fn default_scan_panel_state_is_i32_equal_to_with_an_empty_value() {
+    let state = AppState::default();
+
+    assert_eq!(state.scan_data_type(), ScanDataType::Integer32);
+    assert_eq!(state.scan_match_type(), MatchType::EqualTo);
+    assert_eq!(state.scan_input(), "");
+}
+
+#[test]
+fn cycle_scan_data_type_visits_every_variant_once_and_wraps() {
+    let mut state = AppState::default();
+    let start = state.scan_data_type();
+
+    let mut seen = vec![start];
+    for _ in 0..10 {
+        update(&mut state, Msg::CycleScanDataType);
+        seen.push(state.scan_data_type());
+    }
+    update(&mut state, Msg::CycleScanDataType);
+
+    assert_eq!(seen.len(), 11);
+    assert_eq!(state.scan_data_type(), start);
+}
+
+#[test]
+fn cycle_scan_match_type_visits_every_variant_once_and_wraps() {
+    let mut state = AppState::default();
+    let start = state.scan_match_type();
+
+    let mut seen = vec![start];
+    for _ in 0..12 {
+        update(&mut state, Msg::CycleScanMatchType);
+        seen.push(state.scan_match_type());
+    }
+    update(&mut state, Msg::CycleScanMatchType);
+
+    assert_eq!(seen.len(), 13);
+    assert_eq!(state.scan_match_type(), start);
+}
+
+#[test]
+fn set_scan_input_replaces_the_value() {
+    let mut state = AppState::default();
+
+    update(&mut state, Msg::SetScanInput("42".to_owned()));
+
+    assert_eq!(state.scan_input(), "42");
+}
+
+#[test]
+fn run_scan_without_a_value_reports_an_error_even_without_a_session() {
+    let mut state = AppState::default();
+
+    update(&mut state, Msg::RunScan);
+
+    let status = state.status().expect("expected a status message");
+    assert_eq!(status.level, StatusLevel::Error);
+    assert!(status.text.contains("requires a value"));
+}
+
+#[test]
+fn run_scan_range_without_two_values_reports_an_error() {
+    let mut state = AppState::default();
+    for _ in 0..4 {
+        update(&mut state, Msg::CycleScanMatchType);
+    }
+    assert_eq!(state.scan_match_type(), MatchType::Range);
+
+    update(&mut state, Msg::SetScanInput("10".to_owned()));
+    update(&mut state, Msg::RunScan);
+
+    let status = state.status().expect("expected a status message");
+    assert_eq!(status.level, StatusLevel::Error);
+    assert!(status.text.contains("low and high"));
+}
+
+#[test]
+fn run_scan_with_a_valid_value_but_no_session_reports_not_attached() {
+    let mut state = AppState::default();
+    update(&mut state, Msg::SetScanInput("42".to_owned()));
+
+    update(&mut state, Msg::RunScan);
+
+    let status = state.status().expect("expected a status message");
+    assert_eq!(status.level, StatusLevel::Error);
+    assert!(status.text.contains("no process is attached"));
+}
+
+#[test]
+fn cycle_match_sort_toggles_between_address_and_value_and_resets_selection() {
+    let mut state = AppState::default();
+    assert_eq!(state.match_sort(), MatchSortColumn::Address);
+
+    update(&mut state, Msg::CycleMatchSort);
+    assert_eq!(state.match_sort(), MatchSortColumn::Value);
+
+    update(&mut state, Msg::CycleMatchSort);
+    assert_eq!(state.match_sort(), MatchSortColumn::Address);
+    assert_eq!(state.match_selected(), 0);
+}
+
+#[test]
+fn filter_matches_sets_the_filter_and_resets_selection() {
+    let mut state = AppState::default();
+
+    update(&mut state, Msg::FilterMatches("dead".to_owned()));
+
+    assert_eq!(state.match_filter(), "dead");
+    assert_eq!(state.match_selected(), 0);
+    assert!(state.filtered_matches().is_empty());
+}
+
+#[test]
+fn select_next_and_prev_are_a_no_op_in_match_view_without_a_session() {
+    let mut state = AppState::default();
+    update(&mut state, Msg::FocusNext);
+    update(&mut state, Msg::FocusNext);
+    assert_eq!(state.focus(), Focus::MatchView);
+
+    update(&mut state, Msg::SelectNext);
+    update(&mut state, Msg::SelectPrev);
+
+    assert_eq!(state.match_selected(), 0);
+}
+
+#[test]
+fn dismiss_clears_the_scan_input_while_in_scan_panel_focus() {
+    let mut state = AppState::default();
+    update(&mut state, Msg::FocusNext);
+    assert_eq!(state.focus(), Focus::ScanPanel);
+    update(&mut state, Msg::ToggleSearch);
+    update(&mut state, Msg::SetScanInput("42".to_owned()));
+
+    update(&mut state, Msg::Dismiss);
+
+    assert!(!state.search_active());
+    assert_eq!(state.scan_input(), "");
+}
+
+#[test]
+fn dismiss_clears_the_match_filter_while_in_match_view_focus() {
+    let mut state = AppState::default();
+    update(&mut state, Msg::FocusNext);
+    update(&mut state, Msg::FocusNext);
+    assert_eq!(state.focus(), Focus::MatchView);
+    update(&mut state, Msg::ToggleSearch);
+    update(&mut state, Msg::FilterMatches("dead".to_owned()));
+
+    update(&mut state, Msg::Dismiss);
+
+    assert!(!state.search_active());
+    assert_eq!(state.match_filter(), "");
 }

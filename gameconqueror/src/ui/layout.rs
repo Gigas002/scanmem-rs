@@ -6,7 +6,7 @@ use ratatui::style::{Color, Style};
 use ratatui::widgets::Paragraph;
 
 use crate::app::{AppState, Focus, StatusLevel};
-use crate::ui::process_picker;
+use crate::ui::{match_view, process_picker, scan_panel};
 
 /// Renders the current frame: the focused panel's body, then a status bar showing the current
 /// focus, the last status message (if any), and a one-line hint of the global bindings.
@@ -15,6 +15,8 @@ pub fn render(frame: &mut Frame, state: &AppState) {
 
     match state.focus() {
         Focus::ProcessPicker => process_picker::render(frame, chunks[0], state),
+        Focus::ScanPanel => scan_panel::render(frame, chunks[0], state),
+        Focus::MatchView => match_view::render(frame, chunks[0], state),
         other => frame.render_widget(placeholder(other), chunks[0]),
     }
 

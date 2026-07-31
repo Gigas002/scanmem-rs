@@ -4,7 +4,7 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use super::install_panic_hook;
 use super::layout::render;
-use super::{input, keymap, process_picker};
+use super::{input, keymap, match_view, process_picker, scan_panel};
 use crate::app::{AppState, Focus, Msg, update};
 
 #[test]
@@ -32,6 +32,34 @@ fn process_picker_renders_without_panicking() {
         .draw(|frame| {
             let area = frame.area();
             process_picker::render(frame, area, &state);
+        })
+        .unwrap();
+}
+
+#[test]
+fn scan_panel_renders_without_panicking() {
+    let backend = TestBackend::new(60, 10);
+    let mut terminal = Terminal::new(backend).unwrap();
+    let state = AppState::default();
+
+    terminal
+        .draw(|frame| {
+            let area = frame.area();
+            scan_panel::render(frame, area, &state);
+        })
+        .unwrap();
+}
+
+#[test]
+fn match_view_renders_without_panicking() {
+    let backend = TestBackend::new(60, 10);
+    let mut terminal = Terminal::new(backend).unwrap();
+    let state = AppState::default();
+
+    terminal
+        .draw(|frame| {
+            let area = frame.area();
+            match_view::render(frame, area, &state);
         })
         .unwrap();
 }
@@ -92,6 +120,74 @@ fn process_picker_bindings_match_the_documented_table() {
             keymap::lookup_focus(Focus::ProcessPicker, key),
             Some(expected)
         );
+    }
+}
+
+#[test]
+fn scan_panel_bindings_match_the_documented_table() {
+    let cases = [
+        (
+            KeyEvent::new(KeyCode::Char('t'), KeyModifiers::NONE),
+            Msg::CycleScanDataType,
+        ),
+        (
+            KeyEvent::new(KeyCode::Char('m'), KeyModifiers::NONE),
+            Msg::CycleScanMatchType,
+        ),
+        (
+            KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE),
+            Msg::ToggleSearch,
+        ),
+        (
+            KeyEvent::new(KeyCode::Char('s'), KeyModifiers::NONE),
+            Msg::RunScan,
+        ),
+        (
+            KeyEvent::new(KeyCode::Char('n'), KeyModifiers::NONE),
+            Msg::Snapshot,
+        ),
+        (
+            KeyEvent::new(KeyCode::Char('r'), KeyModifiers::NONE),
+            Msg::ResetScan,
+        ),
+    ];
+
+    for (key, expected) in cases {
+        assert_eq!(keymap::lookup_focus(Focus::ScanPanel, key), Some(expected));
+    }
+}
+
+#[test]
+fn match_view_bindings_match_the_documented_table() {
+    let cases = [
+        (
+            KeyEvent::new(KeyCode::Up, KeyModifiers::NONE),
+            Msg::SelectPrev,
+        ),
+        (
+            KeyEvent::new(KeyCode::Char('k'), KeyModifiers::NONE),
+            Msg::SelectPrev,
+        ),
+        (
+            KeyEvent::new(KeyCode::Down, KeyModifiers::NONE),
+            Msg::SelectNext,
+        ),
+        (
+            KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE),
+            Msg::SelectNext,
+        ),
+        (
+            KeyEvent::new(KeyCode::Char('o'), KeyModifiers::NONE),
+            Msg::CycleMatchSort,
+        ),
+        (
+            KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE),
+            Msg::ToggleSearch,
+        ),
+    ];
+
+    for (key, expected) in cases {
+        assert_eq!(keymap::lookup_focus(Focus::MatchView, key), Some(expected));
     }
 }
 
@@ -184,6 +280,78 @@ fn tab_cycles_focus_even_outside_search_mode() {
     input::handle_key(&mut state, KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
 
     assert_eq!(state.focus(), Focus::ScanPanel);
+}
+
+#[test]
+fn typing_while_editing_the_scan_value_appends_to_the_input() {
+    let mut state = AppState::default();
+    update(&mut state, Msg::FocusNext);
+    assert_eq!(state.focus(), Focus::ScanPanel);
+    update(&mut state, Msg::ToggleSearch);
+
+    input::handle_key(
+        &mut state,
+        KeyEvent::new(KeyCode::Char('4'), KeyModifiers::NONE),
+    );
+    input::handle_key(
+        &mut state,
+        KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE),
+    );
+
+    assert_eq!(state.scan_input(), "42");
+}
+
+#[test]
+fn escape_while_editing_the_scan_value_clears_it_and_exits_search() {
+    let mut state = AppState::default();
+    update(&mut state, Msg::FocusNext);
+    update(&mut state, Msg::ToggleSearch);
+    input::handle_key(
+        &mut state,
+        KeyEvent::new(KeyCode::Char('4'), KeyModifiers::NONE),
+    );
+
+    input::handle_key(&mut state, KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+
+    assert!(!state.search_active());
+    assert_eq!(state.scan_input(), "");
+}
+
+#[test]
+fn typing_while_editing_the_match_filter_appends_to_the_query() {
+    let mut state = AppState::default();
+    update(&mut state, Msg::FocusNext);
+    update(&mut state, Msg::FocusNext);
+    assert_eq!(state.focus(), Focus::MatchView);
+    update(&mut state, Msg::ToggleSearch);
+
+    input::handle_key(
+        &mut state,
+        KeyEvent::new(KeyCode::Char('d'), KeyModifiers::NONE),
+    );
+    input::handle_key(
+        &mut state,
+        KeyEvent::new(KeyCode::Char('e'), KeyModifiers::NONE),
+    );
+
+    assert_eq!(state.match_filter(), "de");
+}
+
+#[test]
+fn escape_while_editing_the_match_filter_clears_it_and_exits_search() {
+    let mut state = AppState::default();
+    update(&mut state, Msg::FocusNext);
+    update(&mut state, Msg::FocusNext);
+    update(&mut state, Msg::ToggleSearch);
+    input::handle_key(
+        &mut state,
+        KeyEvent::new(KeyCode::Char('d'), KeyModifiers::NONE),
+    );
+
+    input::handle_key(&mut state, KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+
+    assert!(!state.search_active());
+    assert_eq!(state.match_filter(), "");
 }
 
 #[test]

@@ -29,6 +29,26 @@ pub fn lookup_focus(focus: Focus, key: KeyEvent) -> Option<Msg> {
             (KeyCode::Char('/'), KeyModifiers::NONE) => Some(Msg::ToggleSearch),
             _ => None,
         },
-        Focus::ScanPanel | Focus::MatchView | Focus::CheatView | Focus::HexView => None,
+        Focus::ScanPanel => match (key.code, key.modifiers) {
+            (KeyCode::Char('t'), KeyModifiers::NONE) => Some(Msg::CycleScanDataType),
+            (KeyCode::Char('m'), KeyModifiers::NONE) => Some(Msg::CycleScanMatchType),
+            (KeyCode::Char('/'), KeyModifiers::NONE) => Some(Msg::ToggleSearch),
+            (KeyCode::Char('s'), KeyModifiers::NONE) => Some(Msg::RunScan),
+            (KeyCode::Char('n'), KeyModifiers::NONE) => Some(Msg::Snapshot),
+            (KeyCode::Char('r'), KeyModifiers::NONE) => Some(Msg::ResetScan),
+            _ => None,
+        },
+        Focus::MatchView => match (key.code, key.modifiers) {
+            (KeyCode::Up, KeyModifiers::NONE) | (KeyCode::Char('k'), KeyModifiers::NONE) => {
+                Some(Msg::SelectPrev)
+            }
+            (KeyCode::Down, KeyModifiers::NONE) | (KeyCode::Char('j'), KeyModifiers::NONE) => {
+                Some(Msg::SelectNext)
+            }
+            (KeyCode::Char('o'), KeyModifiers::NONE) => Some(Msg::CycleMatchSort),
+            (KeyCode::Char('/'), KeyModifiers::NONE) => Some(Msg::ToggleSearch),
+            _ => None,
+        },
+        Focus::CheatView | Focus::HexView => None,
     }
 }

@@ -38,8 +38,22 @@ pub enum Msg {
     RefreshProcessList,
     /// Set the Process Picker's incremental filter query, replacing any previous one.
     FilterProcesses(String),
-    /// Enter or exit the Process Picker's search-editing mode (`/` to enter, `Enter` to
-    /// confirm-and-exit while active, `Dismiss` to cancel-and-exit clearing the filter).
+    /// Cycle the Scan Panel's selected data type forward.
+    CycleScanDataType,
+    /// Cycle the Scan Panel's selected match type forward.
+    CycleScanMatchType,
+    /// Set the Scan Panel's free-text value/range input, replacing any previous one.
+    SetScanInput(String),
+    /// Build a `ScanExpr` from the Scan Panel's current data type/match type/input and run it;
+    /// `Session::scan` picks first vs. narrowing based on whether matches are already recorded.
+    RunScan,
+    /// Cycle the Match View's sort column.
+    CycleMatchSort,
+    /// Set the Match View's incremental filter query, replacing any previous one.
+    FilterMatches(String),
+    /// Enter or exit the focused panel's text-editing mode: the Process Picker's filter, the
+    /// Scan Panel's value/range input, or the Match View's filter (`/` to enter, `Enter` to
+    /// confirm-and-exit while active, `Dismiss` to cancel-and-exit clearing the field).
     ToggleSearch,
     /// Move the focused panel's selection forward.
     SelectNext,

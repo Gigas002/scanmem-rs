@@ -4,7 +4,9 @@
 mod input;
 mod keymap;
 mod layout;
+mod match_view;
 mod process_picker;
+mod scan_panel;
 
 use std::io;
 use std::process::ExitCode;

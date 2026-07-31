@@ -10,12 +10,13 @@ mod state;
 use std::process::ExitCode;
 
 use libscanmem::error::ScanmemError;
-use libscanmem::session::Session;
-use libscanmem::value::Value;
+use libscanmem::scanroutines::{MatchType, ScanDataType};
+use libscanmem::session::{ScanCriterion, ScanExpr, Session};
+use libscanmem::value::{self, UserValue, Value};
 
 pub use focus::Focus;
 pub use msg::Msg;
-pub use state::{AppState, CheatEntry, ProcessEntry, Status, StatusLevel};
+pub use state::{AppState, CheatEntry, MatchSortColumn, ProcessEntry, Status, StatusLevel};
 
 use crate::settings::Settings;
 
@@ -53,19 +54,46 @@ pub fn update(state: &mut AppState, msg: Msg) {
             state.process_selected = 0;
             None
         }
+        Msg::CycleScanDataType => {
+            state.scan_data_type = next_data_type(state.scan_data_type);
+            None
+        }
+        Msg::CycleScanMatchType => {
+            state.scan_match_type = next_match_type(state.scan_match_type);
+            None
+        }
+        Msg::SetScanInput(input) => {
+            state.scan_input = input;
+            None
+        }
+        Msg::RunScan => Some(run_scan(state)),
+        Msg::CycleMatchSort => {
+            state.match_sort = state.match_sort.next();
+            state.match_selected = 0;
+            None
+        }
+        Msg::FilterMatches(query) => {
+            state.match_filter = query;
+            state.match_selected = 0;
+            None
+        }
         Msg::ToggleSearch => {
             state.search_active = !state.search_active;
             None
         }
         Msg::SelectNext => {
-            if state.focus == Focus::ProcessPicker {
-                select_process(state, 1);
+            match state.focus {
+                Focus::ProcessPicker => select_process(state, 1),
+                Focus::MatchView => select_match(state, 1),
+                _ => {}
             }
             None
         }
         Msg::SelectPrev => {
-            if state.focus == Focus::ProcessPicker {
-                select_process(state, -1);
+            match state.focus {
+                Focus::ProcessPicker => select_process(state, -1),
+                Focus::MatchView => select_match(state, -1),
+                _ => {}
             }
             None
         }
@@ -86,8 +114,18 @@ pub fn update(state: &mut AppState, msg: Msg) {
                 state.help_visible = false;
             } else if state.search_active {
                 state.search_active = false;
-                state.process_filter.clear();
-                state.process_selected = 0;
+                match state.focus {
+                    Focus::ProcessPicker => {
+                        state.process_filter.clear();
+                        state.process_selected = 0;
+                    }
+                    Focus::ScanPanel => state.scan_input.clear(),
+                    Focus::MatchView => {
+                        state.match_filter.clear();
+                        state.match_selected = 0;
+                    }
+                    Focus::CheatView | Focus::HexView => {}
+                }
             }
             None
         }
@@ -196,6 +234,153 @@ fn select_process(state: &mut AppState, delta: isize) {
     }
     let current = state.process_selected as isize;
     state.process_selected = (current + delta).rem_euclid(len as isize) as usize;
+}
+
+/// Moves `state.match_selected` by `delta` (`1` or `-1`), wrapping within the current
+/// filtered-match count; a no-op if the filtered list is empty.
+fn select_match(state: &mut AppState, delta: isize) {
+    let len = state.filtered_matches().len();
+    if len == 0 {
+        return;
+    }
+    let current = state.match_selected as isize;
+    state.match_selected = (current + delta).rem_euclid(len as isize) as usize;
+}
+
+/// Every [`ScanDataType`] variant, in the order [`next_data_type`] cycles through.
+const SCAN_DATA_TYPES: [ScanDataType; 11] = [
+    ScanDataType::AnyNumber,
+    ScanDataType::AnyInteger,
+    ScanDataType::AnyFloat,
+    ScanDataType::Integer8,
+    ScanDataType::Integer16,
+    ScanDataType::Integer32,
+    ScanDataType::Integer64,
+    ScanDataType::Float32,
+    ScanDataType::Float64,
+    ScanDataType::ByteArray,
+    ScanDataType::String,
+];
+
+/// Every [`MatchType`] variant, in the order [`next_match_type`] cycles through.
+const SCAN_MATCH_TYPES: [MatchType; 13] = [
+    MatchType::Any,
+    MatchType::EqualTo,
+    MatchType::NotEqualTo,
+    MatchType::GreaterThan,
+    MatchType::LessThan,
+    MatchType::Range,
+    MatchType::Update,
+    MatchType::NotChanged,
+    MatchType::Changed,
+    MatchType::Increased,
+    MatchType::Decreased,
+    MatchType::IncreasedBy,
+    MatchType::DecreasedBy,
+];
+
+/// The next [`ScanDataType`] after `current`, wrapping around [`SCAN_DATA_TYPES`]. Neither
+/// `ScanDataType` nor `MatchType` are defined in this crate, so cycling can't be an inherent
+/// method on either.
+fn next_data_type(current: ScanDataType) -> ScanDataType {
+    let index = SCAN_DATA_TYPES
+        .iter()
+        .position(|&data_type| data_type == current)
+        .unwrap_or(0);
+    SCAN_DATA_TYPES[(index + 1) % SCAN_DATA_TYPES.len()]
+}
+
+/// The next [`MatchType`] after `current`, wrapping around [`SCAN_MATCH_TYPES`].
+fn next_match_type(current: MatchType) -> MatchType {
+    let index = SCAN_MATCH_TYPES
+        .iter()
+        .position(|&match_type| match_type == current)
+        .unwrap_or(0);
+    SCAN_MATCH_TYPES[(index + 1) % SCAN_MATCH_TYPES.len()]
+}
+
+fn run_scan(state: &mut AppState) -> Status {
+    match build_scan_expr(state) {
+        Ok(expr) => with_session(state, |session| {
+            session
+                .scan(&expr)
+                .map(|stats| format!("{} match(es)", stats.matches))
+        }),
+        Err(err) => Status::error(err),
+    }
+}
+
+/// Builds a `ScanExpr` from the Scan Panel's current data type/match type/free-text input,
+/// mirroring `scanmem`'s REPL `scan` grammar but reading from already-stored `AppState` fields
+/// instead of splitting a command line into tokens.
+fn build_scan_expr(state: &AppState) -> Result<ScanExpr, String> {
+    let data_type = state.scan_data_type;
+    let match_type = state.scan_match_type;
+    let input = state.scan_input.trim();
+
+    if matches!(data_type, ScanDataType::ByteArray | ScanDataType::String) {
+        if match_type != MatchType::EqualTo {
+            return Err("byte/string scans only support the equal-to match type".to_owned());
+        }
+        let criterion = if data_type == ScanDataType::ByteArray {
+            let pattern =
+                value::parse_bytearray(input.split_whitespace()).map_err(|err| err.to_string())?;
+            ScanCriterion::Value(UserValue::Bytes(pattern))
+        } else if input.is_empty() {
+            return Err("string scan requires a value".to_owned());
+        } else {
+            ScanCriterion::Value(value::parse_string(input))
+        };
+        return Ok(ScanExpr {
+            data_type,
+            match_type,
+            criterion,
+        });
+    }
+
+    let criterion = match match_type {
+        MatchType::Any
+        | MatchType::Update
+        | MatchType::NotChanged
+        | MatchType::Changed
+        | MatchType::Increased
+        | MatchType::Decreased => {
+            if input.is_empty() {
+                ScanCriterion::None
+            } else {
+                return Err("this match type takes no value".to_owned());
+            }
+        }
+        MatchType::Range => {
+            let mut tokens = input.split_whitespace();
+            match (tokens.next(), tokens.next(), tokens.next()) {
+                (Some(low), Some(high), None) => ScanCriterion::Range(
+                    value::parse_number(low).map_err(|err| err.to_string())?,
+                    value::parse_number(high).map_err(|err| err.to_string())?,
+                ),
+                _ => return Err("range match requires a low and high bound".to_owned()),
+            }
+        }
+        MatchType::EqualTo
+        | MatchType::NotEqualTo
+        | MatchType::GreaterThan
+        | MatchType::LessThan
+        | MatchType::IncreasedBy
+        | MatchType::DecreasedBy => {
+            if input.is_empty() {
+                return Err("this match type requires a value".to_owned());
+            }
+            ScanCriterion::Value(UserValue::Number(
+                value::parse_number(input).map_err(|err| err.to_string())?,
+            ))
+        }
+    };
+
+    Ok(ScanExpr {
+        data_type,
+        match_type,
+        criterion,
+    })
 }
 
 fn with_session(

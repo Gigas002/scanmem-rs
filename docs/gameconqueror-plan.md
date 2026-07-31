@@ -306,8 +306,8 @@ status bar.
 
 ### Phase 3 — Scan panel + match grid
 
-- [ ] `ui/scan_panel.rs`: data-type/match-type/value input line → `Msg::StartScan`/`Msg::NarrowScan`.
-- [ ] `ui/match_view.rs`: `Table` over scan results, sort/filter state in `AppState`, driven by keys (§4.3).
+- [x] `ui/scan_panel.rs`: data-type/match-type/value input line → `Msg::StartScan`/`Msg::NarrowScan`.
+- [x] `ui/match_view.rs`: `Table` over scan results, sort/filter state in `AppState`, driven by keys (§4.3).
 
 **Verify**: manual first-scan → narrow loop against `fake_target`, matches shown and narrow correctly,
 using only the keyboard.
