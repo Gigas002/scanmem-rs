@@ -2,6 +2,7 @@
 
 pub mod error;
 pub mod session;
+pub mod sets;
 pub mod value;
 
 /// Returns a greeting for the given name.

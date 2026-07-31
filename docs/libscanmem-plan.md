@@ -213,10 +213,10 @@ Repo-wide renaming, licensing, and CI fixes are already done. `libscanmem`-speci
 
 ### Phase 1 — Value model + sets
 
-- [ ] `value/`: `Value`, `UserValue`, `MatchFlags` (`bitflags`), parse int/float/bytearray/string, `Value` ↔
+- [x] `value/`: `Value`, `UserValue`, `MatchFlags` (`bitflags`), parse int/float/bytearray/string, `Value` ↔
   display string conversions.
-- [ ] `sets/`: comma/range index-set parser.
-- [ ] Unit tests: parse round-trips, edge cases (overflow, empty, malformed ranges).
+- [x] `sets/`: comma/range index-set parser.
+- [x] Unit tests: parse round-trips, edge cases (overflow, empty, malformed ranges).
 
 **Verify**: `cargo test -p libscanmem --no-default-features`, `--all-features` both green.
 

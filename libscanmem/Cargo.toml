@@ -8,5 +8,9 @@ description = "Process attach, memory scanning/matching engine, and memory read/
 keywords.workspace = true
 repository.workspace = true
 
+[dependencies]
+bitflags = { workspace = true }
+thiserror = { workspace = true }
+
 [features]
 default = []
