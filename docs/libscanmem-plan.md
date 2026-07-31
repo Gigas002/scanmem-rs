@@ -21,7 +21,8 @@ safety > 1:1 behavioral compatibility with the C `scanmem`.** This is a betterfi
 | Question | Decision | Rationale |
 | -------- | -------- | --------- |
 | Match storage (`targetmem.c` replacement) | **Safe `Vec<Swath>` redesign**, not a faithful unsafe packed port | Simpler, fully safe, no Miri/fuzz-to-trust unsafe core; some extra bytes/swath is an acceptable cost per the stated priority order |
-| ptrace / `process_vm_readv`/`writev` | **Raw `libc` calls confined to one small unsafe module** (`process::ptrace`); `rustix` for everything else (fs/proc parsing, `waitpid`, `kill`, `mm`) | Neither `rustix` nor `nix` expose a real safe wrapper for `ptrace(2)` or `process_vm_readv`/`writev` — `rustix` has neither at all, and `nix`'s versions are the same unsafe raw call with no real safety gain, plus `nix` is out of scope per the "prefer rustix" direction |
+| ptrace attach/detach | **Raw `libc` calls confined to one small unsafe module** (`process::ptrace`), limited to `PTRACE_ATTACH`/`PTRACE_DETACH` only; `rustix` for everything else (fs/proc parsing, `waitpid`, `kill`, `mm`) | Neither `rustix` nor `nix` expose a real safe wrapper for `ptrace(2)` — `rustix` has none at all, and `nix`'s version is the same unsafe raw call with no real safety gain, plus `nix` is out of scope per the "prefer rustix" direction |
+| Bulk memory read/write | **Safe `/proc/<pid>/mem` file I/O** (`pread`/`pwrite` via `std::os::unix::fs::FileExt` on a `File` opened after attach), not `PTRACE_PEEKDATA`/`POKEDATA` or `process_vm_readv`/`writev` | `/proc/<pid>/mem` access is already gated by the kernel's ptrace-access-mode check, so once attached the transfer itself needs no unsafe FFI; word-at-a-time `PTRACE_PEEKDATA`/`POKEDATA` and `process_vm_readv`/`writev` add unsafe surface for no benefit on the Linux-only scope this plan targets |
 | Platform scope | **Linux-only** | No FreeBSD `cfg` branching, no `PT_ATTACH`-style legacy API, no `process_vm_readv` fallback path to maintain |
 | Command/text protocol | **Not part of `libscanmem`** | Confirmed by [RUST_PORT_ANALYSIS.md](../../scanmem/RUST_PORT_ANALYSIS.md): parse/act/format concerns split — parsing and formatting move to the `scanmem` CLI crate; `libscanmem` exposes typed functions/structs only |
 
@@ -249,9 +250,12 @@ Repo-wide renaming, licensing, and CI fixes are already done. `libscanmem`-speci
 
 ### Phase 5 — Process/ptrace core
 
-- [ ] `process::ptrace` (isolated unsafe): attach/detach, `PTRACE_PEEKDATA`/`POKEDATA` fallback,
-  `process_vm_readv`/`writev` fast path, explicit (non-`static`) peek-data cache struct.
-- [ ] `process/` safe wrapper: region-level read/write orchestration, calls into `maps/` for target layout.
+- [ ] `process::ptrace` (isolated unsafe, limited to `PTRACE_ATTACH`/`PTRACE_DETACH`): attach waits for
+  the `SIGSTOP` via `rustix::process::waitpid`, then opens `/proc/<pid>/mem` `O_RDWR`; detach closes that
+  fd before detaching.
+- [ ] `process/` safe wrapper: region-level read/write orchestration via `pread`/`pwrite` on the
+  `/proc/<pid>/mem` `File` (`std::os::unix::fs::FileExt::read_at`/`write_at` — no unsafe, no
+  `PTRACE_PEEKDATA`/`POKEDATA`, no `process_vm_readv`/`writev`), calling into `maps/` for target layout.
 - [ ] `interrupt/`: `signal-hook`-based stop flag (feature `signals`).
 - [ ] `src/bin/fake_target.rs`: known-memory-layout helper process for integration tests.
 - [ ] Integration tests (§5) against `fake_target`, `#[ignore]`d where `CAP_SYS_PTRACE` may be unavailable
