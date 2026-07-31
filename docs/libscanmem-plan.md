@@ -222,10 +222,10 @@ Repo-wide renaming, licensing, and CI fixes are already done. `libscanmem`-speci
 
 ### Phase 2 — Maps
 
-- [ ] `maps/`: parse `/proc/<pid>/maps` lines into `Region { start, end, perms, path }`.
-- [ ] Region filtering helpers (writable-only, heap/stack/anonymous classification) replacing
+- [x] `maps/`: parse `/proc/<pid>/maps` lines into `Region { start, end, perms, path }`.
+- [x] Region filtering helpers (writable-only, heap/stack/anonymous classification) replacing
   `region_scan_level_t` semantics.
-- [ ] Unit tests against fixture text blobs in `tests/fixtures/maps/*.txt`.
+- [x] Unit tests against fixture text blobs in `tests/fixtures/maps/*.txt`.
 
 **Verify**: no live process needed; pure parsing tests.
 

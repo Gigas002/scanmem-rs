@@ -1,0 +1,13 @@
+00400000-00452000 r-xp 00000000 08:02 173521                             /usr/bin/example
+00651000-00652000 r--p 00051000 08:02 173521                             /usr/bin/example
+00652000-00653000 rw-p 00052000 08:02 173521                             /usr/bin/example
+00653000-00684000 rw-p 00000000 00:00 0 
+00e03000-01a34000 rw-p 00000000 00:00 0                                  [heap]
+7f76a2325000-7f76a24da000 r-xp 00000000 08:02 887039                     /lib/x86_64-linux-gnu/libc-2.19.so
+7f76a24da000-7f76a26da000 ---p 001b5000 08:02 887039                     /lib/x86_64-linux-gnu/libc-2.19.so
+7f76a26da000-7f76a26de000 r--p 001b5000 08:02 887039                     /lib/x86_64-linux-gnu/libc-2.19.so
+7f76a26de000-7f76a26e0000 rw-p 001b9000 08:02 887039                     /lib/x86_64-linux-gnu/libc-2.19.so
+7f76a26e0000-7f76a26e5000 rw-p 00000000 00:00 0 
+7ffcb1de3000-7ffcb1e04000 rw-p 00000000 00:00 0                          [stack]
+7ffcb1eff000-7ffcb1f01000 r-xp 00000000 00:00 0                          [vdso]
+ffffffffff600000-ffffffffff601000 r-xp 00000000 00:00 0                  [vsyscall]

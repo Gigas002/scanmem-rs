@@ -1,0 +1,5 @@
+00400000-00452000 r-xp 00000000 08:02 173521                             /usr/bin/example
+this line is not a valid maps entry at all
+00e03000-01a34000 rw-p 00000000 00:00 0                                  [heap]
+
+7ffcb1de3000-7ffcb1e04000 rw-p 00000000 00:00 0                          [stack]
