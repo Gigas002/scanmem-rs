@@ -250,16 +250,19 @@ Repo-wide renaming, licensing, and CI fixes are already done. `libscanmem`-speci
 
 ### Phase 5 — Process/ptrace core
 
-- [ ] `process::ptrace` (isolated unsafe, limited to `PTRACE_ATTACH`/`PTRACE_DETACH`): attach waits for
+- [x] `process::ptrace` (isolated unsafe, limited to `PTRACE_ATTACH`/`PTRACE_DETACH`): attach waits for
   the `SIGSTOP` via `rustix::process::waitpid`, then opens `/proc/<pid>/mem` `O_RDWR`; detach closes that
   fd before detaching.
-- [ ] `process/` safe wrapper: region-level read/write orchestration via `pread`/`pwrite` on the
+- [x] `process/` safe wrapper: region-level read/write orchestration via `pread`/`pwrite` on the
   `/proc/<pid>/mem` `File` (`std::os::unix::fs::FileExt::read_at`/`write_at` — no unsafe, no
   `PTRACE_PEEKDATA`/`POKEDATA`, no `process_vm_readv`/`writev`), calling into `maps/` for target layout.
-- [ ] `interrupt/`: `signal-hook`-based stop flag (feature `signals`).
-- [ ] `src/bin/fake_target.rs`: known-memory-layout helper process for integration tests.
-- [ ] Integration tests (§5) against `fake_target`, `#[ignore]`d where `CAP_SYS_PTRACE` may be unavailable
+- [x] `interrupt/`: `signal-hook`-based stop flag (feature `signals`).
+- [x] `src/bin/fake_target.rs`: known-memory-layout helper process for integration tests.
+- [x] Integration tests (§5) against `fake_target`, `#[ignore]`d where `CAP_SYS_PTRACE` may be unavailable
   in CI, with a documented manual run command.
+- Note: `process::ptrace`'s real implementation is `cfg(target_os = "linux")`; other host platforms (e.g.
+  a contributor's macOS dev machine) get a stub returning an `ENOSYS`-style error so the crate still
+  builds/tests locally everywhere, while remaining Linux-only in actual capability.
 
 **Verify**: manual — attach to `fake_target`, read/write a known offset, confirm via the helper's own
 stdout assertion.
@@ -279,7 +282,7 @@ stdout assertion.
 - [ ] `cargo-fuzz` targets for `sets`/`value` user-input parsers (optional, documented, not CI-blocking).
 - [ ] README: crate purpose, `Session` quick example, explicit "Linux-only, requires `CAP_SYS_PTRACE`/root"
   note.
-- [ ] CHANGELOG; confirm license per root [README.md](../README.md#license); tag **v0.1.0**.
+- [ ] tag **v0.1.0**.
 
 **Verify**: all [ARCHITECTURE.md §8](./ARCHITECTURE.md#8-quality-gates--required-before-every-commit) gates
 pass at all three feature levels.
