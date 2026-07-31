@@ -5,7 +5,7 @@ use std::process::ExitCode;
 
 use super::AppState;
 use super::repl::dispatch;
-use crate::commands::{Command, parser};
+use crate::commands::{Command, formatter, parser};
 
 /// Runs every `;`-separated command in `script` against `state`, printing each result the same
 /// way the REPL does, and returns the process exit code — [`ExitCode::FAILURE`] if any command
@@ -23,11 +23,11 @@ pub fn run(mut state: AppState, script: &str) -> ExitCode {
             Ok(Command::Quit) => break,
             Ok(command) => {
                 let output = dispatch(&mut state, command);
-                had_error |= output.starts_with("error: ");
+                had_error |= formatter::is_error(&output);
                 println!("{output}");
             }
             Err(err) => {
-                eprintln!("error: {err}");
+                eprintln!("{}", formatter::error(err));
                 had_error = true;
             }
         }

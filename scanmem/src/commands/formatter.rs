@@ -1,16 +1,62 @@
-//! Plain-text formatting for command results — no ANSI color, no `Session` access.
+//! Human-readable formatting for command results — ANSI-colored when stdout is a tty and
+//! `NO_COLOR` is unset (plain text otherwise); no `Session` access.
+
+use std::fmt::Display;
+use std::io::IsTerminal;
 
 use libscanmem::session::{MatchView, ScanStats};
 
+const RED: &str = "\x1b[31m";
+const GREEN: &str = "\x1b[32m";
+const YELLOW: &str = "\x1b[33m";
+const CYAN: &str = "\x1b[36m";
+const RESET: &str = "\x1b[0m";
+
+/// Whether ANSI color codes should be emitted for the current process's stdout.
+fn color_enabled() -> bool {
+    std::env::var_os("NO_COLOR").is_none() && std::io::stdout().is_terminal()
+}
+
+/// Wraps `text` in `code`/[`RESET`] when [`color_enabled`], otherwise returns it unchanged.
+fn colorize(code: &str, text: &str) -> String {
+    if color_enabled() {
+        format!("{code}{text}{RESET}")
+    } else {
+        text.to_owned()
+    }
+}
+
+/// Formats a failed command or parse error uniformly, e.g. `error: no process is attached`.
+pub fn error(err: impl Display) -> String {
+    colorize(RED, &format!("error: {err}"))
+}
+
+/// Whether `text` (as produced by [`error`] or elsewhere) represents an error result.
+pub fn is_error(text: &str) -> bool {
+    text.contains("error: ")
+}
+
+/// Formats a plain confirmation message, e.g. `session reset`.
+pub fn info(text: &str) -> String {
+    colorize(GREEN, text)
+}
+
 /// Formats the outcome of a `scan`/`snapshot` command.
 pub fn scan_stats(stats: ScanStats) -> String {
-    format!("{} match(es)", stats.matches)
+    colorize(GREEN, &format!("{} match(es)", stats.matches))
 }
 
 /// Formats a table of `(index, match)` pairs, one per line.
 pub fn match_table(matches: impl Iterator<Item = (usize, MatchView)>) -> String {
     let mut rows: Vec<String> = matches
-        .map(|(index, view)| format!("[{index}] {:#x} = {}", view.address, view.old_value))
+        .map(|(index, view)| {
+            format!(
+                "[{}] {} = {}",
+                colorize(YELLOW, &index.to_string()),
+                colorize(CYAN, &format!("{:#x}", view.address)),
+                view.old_value
+            )
+        })
         .collect();
     if rows.is_empty() {
         rows.push("no matches".to_owned());
@@ -40,8 +86,8 @@ pub fn dump(address: usize, bytes: &[u8]) -> String {
                 })
                 .collect();
             format!(
-                "{:#010x}  {:<47}  {ascii}",
-                address + row * 16,
+                "{}  {:<47}  {ascii}",
+                colorize(CYAN, &format!("{:#010x}", address + row * 16)),
                 hex.join(" ")
             )
         })
@@ -51,7 +97,7 @@ pub fn dump(address: usize, bytes: &[u8]) -> String {
 
 /// Formats how many matches a `delete` command removed.
 pub fn deleted(count: usize) -> String {
-    format!("deleted {count} match(es)")
+    colorize(GREEN, &format!("deleted {count} match(es)"))
 }
 
 /// Static help text listing every REPL verb.

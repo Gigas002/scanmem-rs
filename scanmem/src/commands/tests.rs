@@ -216,6 +216,20 @@ fn formats_deleted_count() {
 }
 
 #[test]
+fn formats_an_error_uncolored_outside_a_tty() {
+    assert_eq!(
+        formatter::error("no process is attached"),
+        "error: no process is attached"
+    );
+}
+
+#[test]
+fn is_error_detects_the_error_prefix() {
+    assert!(formatter::is_error("error: no process is attached"));
+    assert!(!formatter::is_error("3 match(es)"));
+}
+
+#[test]
 fn help_lists_every_verb() {
     let text = formatter::help();
     for verb in [

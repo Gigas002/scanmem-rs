@@ -10,6 +10,7 @@ use libscanmem::error::ScanmemError;
 use libscanmem::session::Session;
 use rustix::process::Pid;
 
+use crate::commands::formatter;
 use crate::settings::Settings;
 
 /// One attached (or not-yet-attached) session plus REPL-local state — the structured
@@ -52,11 +53,20 @@ pub fn run(settings: Settings) -> ExitCode {
         match state.attach(pid) {
             Ok(region_count) => {
                 println!(
-                    "attached to pid {}: {region_count} region(s)",
-                    pid.as_raw_pid()
+                    "{}",
+                    formatter::info(&format!(
+                        "attached to pid {}: {region_count} region(s)",
+                        pid.as_raw_pid()
+                    ))
                 );
             }
-            Err(err) => eprintln!("error: failed to attach to pid {}: {err}", pid.as_raw_pid()),
+            Err(err) => eprintln!(
+                "{}",
+                formatter::error(format!(
+                    "failed to attach to pid {}: {err}",
+                    pid.as_raw_pid()
+                ))
+            ),
         }
     }
 
