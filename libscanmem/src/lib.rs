@@ -2,6 +2,7 @@
 
 pub mod error;
 pub mod maps;
+pub mod scanroutines;
 pub mod session;
 pub mod sets;
 pub mod value;

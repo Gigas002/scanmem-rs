@@ -231,10 +231,10 @@ Repo-wide renaming, licensing, and CI fixes are already done. `libscanmem`-speci
 
 ### Phase 3 — Scan routines
 
-- [ ] `scanroutines/`: generic comparator trait(s) bounded by `num-traits`, covering `ANYNUMBER`/`INTEGER*`/
+- [x] `scanroutines/`: generic comparator trait(s) bounded by `num-traits`, covering `ANYNUMBER`/`INTEGER*`/
   `FLOAT*`/`BYTEARRAY`/`STRING` × `MATCHEQUALTO`/`..RANGE`/`..UPDATE`/`..CHANGED`/`..INCREASED(BY)`/etc.
-- [ ] Endianness handling as an explicit parameter, not a global flag.
-- [ ] Exhaustive unit tests per (data type × match type) combination against known byte patterns.
+- [x] Endianness handling as an explicit parameter, not a global flag.
+- [x] Exhaustive unit tests per (data type × match type) combination against known byte patterns.
 
 **Verify**: table-driven tests cover every `ScanDataType`/`MatchType` pair actually reachable from `Session`.
 
