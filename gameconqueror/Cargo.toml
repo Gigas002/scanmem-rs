@@ -1,0 +1,15 @@
+[package]
+name = "gameconqueror"
+version.workspace = true
+edition.workspace = true
+license = "GPL-3.0-or-later"
+homepage.workspace = true
+description = "GTK4 GUI front-end for libscanmem"
+keywords.workspace = true
+repository.workspace = true
+
+[dependencies]
+libscanmem = { path = "../libscanmem", version = "0.1.0" }
+
+[features]
+default = []

@@ -6,7 +6,7 @@ first shipped as a classic REPL, with a **ratatui TUI** as the "perfect world" f
 
 Background analysis: [scanmem/RUST_PORT_ANALYSIS.md](../../scanmem/RUST_PORT_ANALYSIS.md).
 Generic workspace/settings/testing/quality-gate rules: [ARCHITECTURE.md](./ARCHITECTURE.md). Repo-wide
-renaming/licensing/CI jobs that must land first: [PLAN.md](./PLAN.md). Sibling plans:
+Sibling plans:
 [libscanmem-plan.md](./libscanmem-plan.md) (engine, must land first), [gameconqueror-plan.md](./gameconqueror-plan.md) (GUI).
 
 **Priority order for every design call in this plan: code quality > performance > safety > 1:1 behavioral
@@ -193,7 +193,7 @@ Generic policy: [ARCHITECTURE.md §7](./ARCHITECTURE.md#7-dependencies).
 
 ### Phase 0 — Crate bootstrap
 
-Repo-wide renaming/licensing/CI fixes are tracked once in [PLAN.md](./PLAN.md) — complete that first.
+Repo-wide renaming/licensing/CI fixes are already done.
 `scanmem`-specific bootstrap:
 
 - [ ] `cli/`, `config/`, `settings/`, `logger/`, `app/` skeletons; depend on `libscanmem`.

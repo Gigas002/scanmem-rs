@@ -1,13 +1,12 @@
 [package]
-name = "crate"
+name = "libscanmem"
 version.workspace = true
 edition.workspace = true
-license.workspace = true
+license = "LGPL-3.0-or-later"
 homepage.workspace = true
-description.workspace = true
+description = "Process attach, memory scanning/matching engine, and memory read/write for scanmem-rs"
 keywords.workspace = true
 repository.workspace = true
 
 [features]
 default = []
-extra = []

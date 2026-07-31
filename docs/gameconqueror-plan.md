@@ -6,7 +6,7 @@ to **`iced`**, both sharing one toolkit-independent core.
 
 Background analysis: [scanmem/RUST_PORT_ANALYSIS.md](../../scanmem/RUST_PORT_ANALYSIS.md).
 Generic workspace/settings/testing/quality-gate rules: [ARCHITECTURE.md](./ARCHITECTURE.md). Repo-wide
-renaming/licensing/CI jobs that must land first: [PLAN.md](./PLAN.md). Sibling plans:
+Sibling plans:
 [libscanmem-plan.md](./libscanmem-plan.md) (engine, must land first), [scanmem-plan.md](./scanmem-plan.md) (CLI/TUI).
 
 **Priority order for every design call in this plan: code quality > performance > safety > 1:1 behavioral
@@ -189,7 +189,7 @@ based `TreeView` grids.
 ### Phase 0 — Crate bootstrap
 
 Repo-wide renaming/licensing/CI fixes, including adding `gameconqueror/` as a new workspace member, are
-tracked once in [PLAN.md](./PLAN.md) — complete that first. `gameconqueror`-specific bootstrap:
+already done. `gameconqueror`-specific bootstrap:
 
 - [ ] `cli/`, `config/`, `settings/`, `logger/`, empty `app/` and `ui/` skeletons.
 - [ ] Vertical slice: GTK4 window shell that opens and closes cleanly, no scanning yet.

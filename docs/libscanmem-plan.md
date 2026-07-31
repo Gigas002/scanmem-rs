@@ -8,7 +8,7 @@ structured, typed API** — no text-command protocol, no CLI, no UI concerns.
 Background analysis: [scanmem/RUST_PORT_ANALYSIS.md](../../scanmem/RUST_PORT_ANALYSIS.md).
 Generic workspace/testing/quality-gate rules: [ARCHITECTURE.md](./ARCHITECTURE.md) — follow that document for
 every change; this plan covers **engine module split, API shape, unsafe boundaries, and phased delivery**
-only. Repo-wide renaming/licensing/CI jobs that must land first: [PLAN.md](./PLAN.md). Sibling plans:
+only. Sibling plans:
 [scanmem-plan.md](./scanmem-plan.md) (CLI/TUI), [gameconqueror-plan.md](./gameconqueror-plan.md) (GUI).
 
 **Priority order for every design call in this plan (per project direction): code quality > performance >
@@ -25,8 +25,7 @@ safety > 1:1 behavioral compatibility with the C `scanmem`.** This is a betterfi
 | Platform scope | **Linux-only** | No FreeBSD `cfg` branching, no `PT_ATTACH`-style legacy API, no `process_vm_readv` fallback path to maintain |
 | Command/text protocol | **Not part of `libscanmem`** | Confirmed by [RUST_PORT_ANALYSIS.md](../../scanmem/RUST_PORT_ANALYSIS.md): parse/act/format concerns split — parsing and formatting move to the `scanmem` CLI crate; `libscanmem` exposes typed functions/structs only |
 
-**Licensing**: tracked as a repo-wide job in [PLAN.md §1](./PLAN.md#1-licensing-decision--fix), not decided
-per-crate here — resolve it before Phase 7's release tag.
+**Licensing**: `libscanmem` ships as `LGPL-3.0-or-later` (see root [README.md](../README.md#license)).
 
 ---
 
@@ -204,8 +203,7 @@ crate (UI/CLI concern, belongs to sibling crates).
 
 ### Phase 0 — Workspace bootstrap
 
-Repo-wide renaming, licensing, and CI fixes are tracked once in [PLAN.md](./PLAN.md) — complete that
-first. `libscanmem`-specific bootstrap:
+Repo-wide renaming, licensing, and CI fixes are already done. `libscanmem`-specific bootstrap:
 
 - [ ] Add `rustix`, `libc`, `bitflags`, `num-traits`, `thiserror`, `tracing`, `signal-hook` to
   `[workspace.dependencies]` (added here, as the first crate that needs them).
@@ -277,7 +275,7 @@ stdout assertion.
 - [ ] `cargo-fuzz` targets for `sets`/`value` user-input parsers (optional, documented, not CI-blocking).
 - [ ] README: crate purpose, `Session` quick example, explicit "Linux-only, requires `CAP_SYS_PTRACE`/root"
   note.
-- [ ] CHANGELOG; confirm license per [PLAN.md §1](./PLAN.md#1-licensing-decision--fix); tag **v0.1.0**.
+- [ ] CHANGELOG; confirm license per root [README.md](../README.md#license); tag **v0.1.0**.
 
 **Verify**: all [ARCHITECTURE.md §8](./ARCHITECTURE.md#8-quality-gates--required-before-every-commit) gates
 pass at all three feature levels.

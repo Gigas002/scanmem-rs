@@ -3,12 +3,19 @@
 version = 4
 
 [[package]]
-name = "binary-crate"
+name = "gameconqueror"
 version = "0.1.0"
 dependencies = [
- "crate",
+ "libscanmem",
 ]
 
 [[package]]
-name = "crate"
+name = "libscanmem"
 version = "0.1.0"
+
+[[package]]
+name = "scanmem"
+version = "0.1.0"
+dependencies = [
+ "libscanmem",
+]
