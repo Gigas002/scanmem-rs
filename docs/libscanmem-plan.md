@@ -205,9 +205,9 @@ crate (UI/CLI concern, belongs to sibling crates).
 
 Repo-wide renaming, licensing, and CI fixes are already done. `libscanmem`-specific bootstrap:
 
-- [ ] Add `rustix`, `libc`, `bitflags`, `num-traits`, `thiserror`, `tracing`, `signal-hook` to
+- [x] Add `rustix`, `libc`, `bitflags`, `num-traits`, `thiserror`, `tracing`, `signal-hook` to
   `[workspace.dependencies]` (added here, as the first crate that needs them).
-- [ ] `error/`, `value/`, `session/` as empty modules with `mod.rs` + `tests.rs` stubs.
+- [x] `error/`, `value/`, `session/` as empty modules with `mod.rs` + `tests.rs` stubs.
 
 **Verify**: `cargo build --workspace`, `cargo fmt --all -- --check`, `cargo deny check` green.
 

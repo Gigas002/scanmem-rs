@@ -295,7 +295,24 @@ When splitting a workspace into library and binary crates:
 
 ---
 
-## 10. Checklist for new work
+## 10. Code comments
+
+Comments (line comments and `///`/`//!` doc comments) explain the code they sit next to — not the planning
+process that produced it.
+
+- Comments may reference **only**: the surrounding implementation (why this line/algorithm/workaround exists,
+  what invariant it upholds), and an external dependency's own documentation (docs.rs pages, upstream
+  GitHub issues/PRs/changelogs, RFCs, man pages, spec documents) when needed to explain a non-obvious
+  constraint.
+- Comments must **never** reference anything under `docs/` — `ARCHITECTURE.md`, any `*-plan.md`, phase
+  numbers, or checklist items. Those are roadmap documents for humans/agents planning work; they are edited,
+  reordered, and deleted independently of the code, so a comment pointing at them goes stale silently.
+- If a comment would need to explain *why a phase/plan chose this design*, put that reasoning in the plan
+  document itself (or the PR description) — not in the code.
+
+---
+
+## 11. Checklist for new work
 
 Before opening a pull request:
 
@@ -309,4 +326,5 @@ Before opening a pull request:
 - [ ] New features pass build, clippy, and tests at all three CI levels (`--no-default-features`, default, `--all-features`).
 - [ ] Dependencies are latest, active, and justified.
 - [ ] Tests cover new behavior; coverage does not regress meaningfully.
+- [ ] Comments do not reference `docs/` plans/phases (§10).
 - [ ] All quality gates in §8 pass locally.
