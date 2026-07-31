@@ -99,7 +99,7 @@ gameconqueror/
     cli/                  # clap: --pid, --config
       mod.rs
       tests.rs
-    config/                 # optional TOML: last cheat-list path, color theme preference
+    config/                 # optional TOML: last cheat-list path
       mod.rs
       tests.rs
     settings/
@@ -277,8 +277,8 @@ Generic policy: [ARCHITECTURE.md §7](./ARCHITECTURE.md#7-dependencies).
 Repo-wide renaming/licensing/CI fixes, including adding `gameconqueror/` as a new workspace member, are
 already done. `gameconqueror`-specific bootstrap:
 
-- [ ] `cli/`, `config/`, `settings/`, `logger/` (file-only sink), empty `app/` and `ui/` skeletons.
-- [ ] Vertical slice: a `ratatui` shell that draws an empty frame with a status bar and quits cleanly on
+- [x] `cli/`, `config/`, `settings/`, `logger/` (file-only sink), empty `app/` and `ui/` skeletons.
+- [x] Vertical slice: a `ratatui` shell that draws an empty frame with a status bar and quits cleanly on
   `Ctrl+Q`, restoring the terminal on both normal exit and panic (a `Drop` guard or panic hook around
   `crossterm::terminal::disable_raw_mode`/leaving the alternate screen — a raw terminal left broken on
   panic is the single most common TUI footgun).
