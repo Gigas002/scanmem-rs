@@ -1,16 +1,9 @@
 //! Slim entry point: parse CLI, resolve settings, init logging, hand off to `app`.
 
-mod app;
-mod cli;
-mod logger;
-mod settings;
-
-#[cfg(feature = "tui")]
-mod ui;
-
 use std::process::ExitCode;
 
 use clap::Parser;
+use gameconqueror::{app, cli, logger, settings};
 
 fn main() -> ExitCode {
     let args = cli::CliArgs::parse();

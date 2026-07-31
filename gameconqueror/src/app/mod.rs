@@ -1,27 +1,200 @@
-//! Application entry point behind the settings boundary — only [`Settings`] crosses in here, no
-//! CLI or raw config types. The `Msg`/`update()` state machine described in
-//! `docs/gameconqueror-plan.md` lands in a later phase; this is an empty skeleton for now.
+//! Application core: [`AppState`], [`Msg`], and [`update`] — a toolkit-independent state
+//! machine. Only [`crate::settings::Settings`] crosses in from `main`; no CLI or raw config
+//! types, and no `ratatui`/`crossterm` types anywhere in this module tree.
+
+mod focus;
+mod msg;
+mod state;
 
 use std::process::ExitCode;
 
+use libscanmem::error::ScanmemError;
+use libscanmem::session::Session;
+use libscanmem::value::Value;
+
+pub use focus::Focus;
+pub use msg::Msg;
+pub use state::{AppState, CheatEntry, Status, StatusLevel};
+
 use crate::settings::Settings;
 
-/// Placeholder application state, grown into the full state machine in a later phase.
-#[derive(Debug)]
-pub struct AppState;
+/// Applies `msg` to `state`, calling into the attached [`Session`] as needed. This is the only
+/// place `AppState` is mutated.
+pub fn update(state: &mut AppState, msg: Msg) {
+    let status = match msg {
+        Msg::Attach(pid) => Some(attach(state, pid)),
+        Msg::Detach => Some(detach(state)),
+        Msg::Scan(expr) => Some(with_session(state, |session| {
+            session
+                .scan(&expr)
+                .map(|stats| format!("{} match(es)", stats.matches))
+        })),
+        Msg::Snapshot => Some(with_session(state, |session| {
+            session
+                .snapshot()
+                .map(|stats| format!("{} match(es)", stats.matches))
+        })),
+        Msg::ResetScan => Some(reset_scan(state)),
+        Msg::Write { address, value } => Some(with_session(state, |session| {
+            session.write(address, &value).map(|()| "ok".to_owned())
+        })),
+        Msg::AddCheat {
+            address,
+            description,
+            value,
+        } => Some(add_cheat(state, address, description, value)),
+        Msg::RemoveCheat(index) => Some(remove_cheat(state, index)),
+        Msg::ToggleFreeze(index) => Some(toggle_freeze(state, index)),
+        Msg::EditCheatValue { index, value } => Some(edit_cheat_value(state, index, value)),
+        Msg::FocusNext => {
+            state.focus = state.focus.next();
+            None
+        }
+        Msg::FocusPrev => {
+            state.focus = state.focus.prev();
+            None
+        }
+        Msg::ShowHelp => {
+            state.help_visible = !state.help_visible;
+            None
+        }
+        Msg::Dismiss => {
+            state.help_visible = false;
+            None
+        }
+        Msg::Quit => {
+            state.quit = true;
+            None
+        }
+    };
 
+    if let Some(status) = status {
+        state.status = Some(status);
+    }
+}
+
+fn attach(state: &mut AppState, pid: u32) -> Status {
+    let Some(pid) = rustix::process::Pid::from_raw(pid as i32) else {
+        return Status::error("pid must not be zero");
+    };
+    match state.attach(pid) {
+        Ok(region_count) => Status::info(format!(
+            "attached to pid {}: {region_count} region(s)",
+            pid.as_raw_pid()
+        )),
+        Err(err) => Status::error(err.to_string()),
+    }
+}
+
+fn detach(state: &mut AppState) -> Status {
+    match state.detach() {
+        Ok(()) => Status::info("detached"),
+        Err(err) => Status::error(err.to_string()),
+    }
+}
+
+fn reset_scan(state: &mut AppState) -> Status {
+    match state.session.as_mut() {
+        Some(session) => {
+            session.delete_in_range(0..usize::MAX);
+            Status::info("scan reset")
+        }
+        None => not_attached(),
+    }
+}
+
+fn add_cheat(state: &mut AppState, address: usize, description: String, value: Value) -> Status {
+    state.cheats.push(CheatEntry {
+        address,
+        description,
+        value,
+        frozen: false,
+    });
+    Status::info("cheat added")
+}
+
+fn remove_cheat(state: &mut AppState, index: usize) -> Status {
+    if index >= state.cheats.len() {
+        return cheat_index_out_of_range(index);
+    }
+    state.cheats.remove(index);
+    Status::info("cheat removed")
+}
+
+fn toggle_freeze(state: &mut AppState, index: usize) -> Status {
+    match state.cheats.get_mut(index) {
+        Some(entry) => {
+            entry.frozen = !entry.frozen;
+            Status::info(if entry.frozen {
+                "cheat frozen"
+            } else {
+                "cheat unfrozen"
+            })
+        }
+        None => cheat_index_out_of_range(index),
+    }
+}
+
+fn edit_cheat_value(state: &mut AppState, index: usize, value: Value) -> Status {
+    let Some(entry) = state.cheats.get(index) else {
+        return cheat_index_out_of_range(index);
+    };
+    let address = entry.address;
+    let Some(session) = state.session.as_mut() else {
+        return not_attached();
+    };
+    match session.write(address, &value) {
+        Ok(()) => {
+            state.cheats[index].value = value;
+            Status::info("cheat value updated")
+        }
+        Err(err) => Status::error(err.to_string()),
+    }
+}
+
+fn with_session(
+    state: &mut AppState,
+    f: impl FnOnce(&mut Session) -> Result<String, ScanmemError>,
+) -> Status {
+    match state.session.as_mut() {
+        Some(session) => match f(session) {
+            Ok(text) => Status::info(text),
+            Err(err) => Status::error(err.to_string()),
+        },
+        None => not_attached(),
+    }
+}
+
+fn not_attached() -> Status {
+    Status::error(ScanmemError::NotAttached.to_string())
+}
+
+fn cheat_index_out_of_range(index: usize) -> Status {
+    Status::error(format!("cheat index {index} is out of range"))
+}
+
+/// Runs the application: attaches to `settings.pid` first if given, then hands off to the
+/// `ratatui` shell.
 #[cfg(feature = "tui")]
 pub fn run(settings: Settings) -> ExitCode {
-    let mut state = AppState;
+    let mut state = AppState::default();
+    attach_from_settings(&mut state, &settings);
     crate::ui::run(&mut state, &settings)
 }
 
 #[cfg(not(feature = "tui"))]
 pub fn run(settings: Settings) -> ExitCode {
-    let _state = AppState;
-    let _ = settings;
+    let mut state = AppState::default();
+    attach_from_settings(&mut state, &settings);
+    let _ = state;
     eprintln!("gameconqueror: built without the `tui` feature; nothing to run");
     ExitCode::FAILURE
+}
+
+fn attach_from_settings(state: &mut AppState, settings: &Settings) {
+    if let Some(pid) = settings.pid {
+        update(state, Msg::Attach(pid));
+    }
 }
 
 #[cfg(test)]

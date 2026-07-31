@@ -12,6 +12,7 @@ repository.workspace = true
 clap = { version = "4", features = ["derive"] }
 libscanmem = { path = "../libscanmem", version = "0.1.0" }
 ratatui = { version = "0.30", optional = true }
+rustix = { version = "1", features = ["process"] }
 tracing = { workspace = true }
 tracing-subscriber = "0.3"
 

@@ -14,7 +14,7 @@ fn installing_the_panic_hook_does_not_panic() {
 fn layout_renders_without_panicking() {
     let backend = TestBackend::new(40, 10);
     let mut terminal = Terminal::new(backend).unwrap();
-    let state = AppState;
+    let state = AppState::default();
 
     terminal.draw(|frame| render(frame, &state)).unwrap();
 }

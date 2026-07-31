@@ -571,6 +571,7 @@ dependencies = [
  "clap",
  "libscanmem",
  "ratatui",
+ "rustix",
  "tracing",
  "tracing-subscriber",
 ]

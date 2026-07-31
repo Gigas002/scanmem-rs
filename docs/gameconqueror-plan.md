@@ -286,10 +286,10 @@ still compiles (`app/` only, no `ratatui`/`crossterm`).
 
 ### Phase 1 — Core (`app/`)
 
-- [ ] `AppState`, `Msg` enum covering attach/scan/narrow/write/cheat-list/focus/help operations.
-- [ ] `app/focus.rs`: `Focus` enum and cycling order.
-- [ ] `update(state, msg)` calling `libscanmem::Session`; no `ratatui`/`crossterm` types anywhere in `app/`.
-- [ ] Unit tests for every `Msg` variant against `fake_target`.
+- [x] `AppState`, `Msg` enum covering attach/scan/narrow/write/cheat-list/focus/help operations.
+- [x] `app/focus.rs`: `Focus` enum and cycling order.
+- [x] `update(state, msg)` calling `libscanmem::Session`; no `ratatui`/`crossterm` types anywhere in `app/`.
+- [x] Unit tests for every `Msg` variant against `fake_target`.
 
 **Verify**: `cargo test -p gameconqueror --no-default-features` green — the core works with zero terminal
 UI compiled in.
