@@ -264,6 +264,10 @@ fn session_operations_without_attach_fail_with_not_attached() {
         Err(ScanmemError::NotAttached)
     ));
     assert!(matches!(session.detach(), Err(ScanmemError::NotAttached)));
+    assert!(matches!(
+        session.region_count(),
+        Err(ScanmemError::NotAttached)
+    ));
 }
 
 #[test]

@@ -1,7 +1,16 @@
-// Placeholder entry point — real CLI lands per docs/scanmem-plan.md.
-fn main() {
-    println!("scanmem");
-}
+//! Slim entry point: parse CLI, resolve settings, init logging, hand off to `app`.
 
-#[cfg(test)]
-mod tests;
+mod app;
+mod cli;
+mod commands;
+mod logger;
+mod settings;
+
+use clap::Parser;
+
+fn main() {
+    let args = cli::CliArgs::parse();
+    let settings = settings::resolve(&args);
+    logger::init(&settings);
+    app::run(settings);
+}

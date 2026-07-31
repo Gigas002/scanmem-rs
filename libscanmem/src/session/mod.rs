@@ -205,6 +205,11 @@ impl Session {
         self.process()?.write(address, &bytes)
     }
 
+    /// Number of `/proc/<pid>/maps` regions currently mapped for the attached process.
+    pub fn region_count(&self) -> Result<usize> {
+        Ok(self.process()?.regions()?.len())
+    }
+
     pub fn set_option(&mut self, option: SessionOption) {
         match option {
             SessionOption::Endianness(endianness) => self.options.endianness = endianness,

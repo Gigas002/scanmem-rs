@@ -21,6 +21,8 @@ compatibility with the C `scanmem` CLI.**
 | -------- | -------- | --------- |
 | Front-end shape | **CLI/REPL only, no TUI** | Matches how the original C `scanmem` is actually used day to day; a full-screen TUI is unnecessary complexity for this crate |
 | Text-command scripting compat (`scanmem -c "pid 1234;list"`) | **Clean-slate design, no compat requirement** | Old grammar was fused parse/act/format C code; a fresh command set designed against `libscanmem::Session` directly is higher quality and avoids dragging legacy quirks forward |
+| Config file | **None — CLI flags + built-in defaults only** | The original C `scanmem` has no config file either; a `settings/` resolver merging CLI over defaults is enough, so no `config/` module, `serde`, or `toml` dependency |
+| Command history persistence | **In-memory only for this session, no history file** | Matches the original C `scanmem`'s lack of a persisted history file; `rustyline`'s `with-file-history`/`with-dirs` default features are disabled accordingly |
 
 Familiar verb names (`pid`, `scan`/`list`, `dump`, `write`, `option`, `delete`, `reset`, `snapshot`) are kept
 for user muscle-memory where they still make sense, but **grammar, output format, and one-shot scripting
@@ -37,7 +39,7 @@ syntax are redesigned** — not byte-compatible with the old protocol.
 - **One front-end**: an interactive REPL plus one-shot scripting (`--exec`), matching the interactive
   shell experience of the original C `scanmem` — no TUI, no `ratatui`/`crossterm` dependency at all.
 - **`Settings` resolution** follows [ARCHITECTURE.md §3](./ARCHITECTURE.md#3-settings-resolution-unified-resolver):
-  CLI (`clap`) > optional TOML config > defaults.
+  CLI (`clap`) > defaults — no config file (see §0).
 - **Slim `main`**: parse CLI, resolve `Settings`, init `tracing` subscriber, hand off to `app/`.
 
 ### 1.2 Non-goals / deferred
@@ -66,13 +68,10 @@ Generic module conventions: [ARCHITECTURE.md §2, §4](./ARCHITECTURE.md#2-repos
 scanmem/
   src/
     main.rs             # slim entry point
-    cli/                # clap: --pid, --exec <script>, --config, -v/--verbose
+    cli/                # clap: --pid, --exec <script>, -v/--verbose
       mod.rs
       tests.rs
-    config/              # optional TOML: default alignment, color, history file path
-      mod.rs
-      tests.rs
-    settings/            # merge cli + config + defaults -> Settings
+    settings/            # merge cli + defaults -> Settings
       mod.rs
       tests.rs
     logger/               # tracing subscriber init from Settings
@@ -97,14 +96,11 @@ scanmem/
 
 ### 2.1 Cargo features
 
-| Feature | Default | Gates |
-| ------- | ------- | ----- |
-| `serde` | off | Passthrough to `libscanmem/serde` if config/export commands need it |
-
-No UI-toolkit feature exists in this crate — it is CLI/REPL only, so there is no `--no-default-features`
-vs. `--all-features` distinction driven by a UI dependency; the three-level CI matrix from
-[ARCHITECTURE.md §1.4](./ARCHITECTURE.md#14-cargo-features-for-slim-builds) still applies for the `serde`
-feature.
+No Cargo features are defined in this crate — there is no config file (so no `serde`/`toml` passthrough)
+and no UI-toolkit feature, so there is no `--no-default-features` vs. `--all-features` distinction driven
+by anything crate-specific; the three-level CI matrix from
+[ARCHITECTURE.md §1.4](./ARCHITECTURE.md#14-cargo-features-for-slim-builds) still applies (all three
+levels build/test/lint identically since nothing is feature-gated).
 
 ---
 
@@ -130,8 +126,8 @@ One-shot scripting: `scanmem --exec 'attach 1234; scan i32 = 100; scan i32 incre
 
 ## 4. Front-end behavior
 
-- `rustyline` for line editing, history (`~/.local/state/scanmem/history` or `$XDG_STATE_HOME`), and
-  command completion (verb names, then context-sensitive: match indices after `list`, etc.).
+- `rustyline` for line editing (in-memory history for the current session only, no history file — see
+  §0) and command completion (verb names, then context-sensitive: match indices after `list`, etc.).
 - Plain-text formatter in `commands/formatter.rs` — human-readable tables, no ANSI color when stdout is
   not a tty (respects `NO_COLOR`).
 - `Session::request_stop()` wired to `Ctrl-C` during a long `scan`, not process termination (mirrors
@@ -159,12 +155,14 @@ Generic policy: [ARCHITECTURE.md §7](./ARCHITECTURE.md#7-dependencies).
 | Area | Crate | Notes |
 | ---- | ----- | ----- |
 | Engine | `libscanmem` | workspace path dependency |
-| CLI | `clap` (derive) | `--pid`, `--exec`, `--config`, `-v` |
-| REPL editing | `rustyline` | history + completion, portable pure-Rust line editor |
-| Config | `serde`, `toml` | optional `config/` TOML |
+| CLI | `clap` (derive) | `--pid`, `--exec`, `-v` |
+| REPL editing | `rustyline` | in-memory history + completion, portable pure-Rust line editor; `with-dirs`/`with-file-history` default features disabled (no history file, no config dir) |
 | Logging | `tracing`, `tracing-subscriber` | binary-only, per [ARCHITECTURE.md §5](./ARCHITECTURE.md#5-logging) |
 | Errors | `thiserror` | CLI-local error type wrapping `ScanmemError` |
 | Testing | `assert_cmd`, `predicates` | integration tests |
+
+Versions are pinned per repo convention: major-only for `>=1` (e.g. `rustyline = "18"`), `0.minor` for
+`0.x` (e.g. `tracing-subscriber = "0.3"`) — never a full `x.y.z`.
 
 ---
 
@@ -175,18 +173,19 @@ Generic policy: [ARCHITECTURE.md §7](./ARCHITECTURE.md#7-dependencies).
 Repo-wide renaming/licensing/CI fixes are already done.
 `scanmem`-specific bootstrap:
 
-- [ ] `cli/`, `config/`, `settings/`, `logger/`, `app/` skeletons; depend on `libscanmem`.
-- [ ] Vertical slice: `scanmem --pid <n>` attaches and prints region count, nothing else.
+- [x] `cli/`, `settings/`, `logger/`, `app/` skeletons; depend on `libscanmem` (no `config/` — see §0).
+- [x] Vertical slice: `scanmem --pid <n>` attaches and prints region count, nothing else.
 
 **Verify**: `cargo run -p scanmem -- --pid $$` prints something sane against the current shell's own pid.
 
 ### Phase 1 — Command core (REPL)
 
-- [ ] `commands/`: `Command` enum, parser, plain-text formatter for the verb table in §3.
-- [ ] `app/repl.rs`: `rustyline`-backed loop, dispatch to `Session`, print via formatter.
-- [ ] Unit tests for parser/formatter.
+- [x] `commands/`: `Command` enum, parser, plain-text formatter for the verb table in §3.
+- [x] `app/repl.rs`: `rustyline`-backed loop, dispatch to `Session`, print via formatter.
+- [x] Unit tests for parser/formatter.
 
-**Verify**: manual REPL session against `fake_target` — attach, scan, narrow, list, write, verify.
+**Verify**: `cargo test --workspace` green (parser/formatter/app unit tests). Manual REPL session against
+`fake_target` — attach, scan, narrow, list, write, verify — still pending (requires `CAP_SYS_PTRACE`).
 
 ### Phase 2 — One-shot scripting + integration tests
 
@@ -197,10 +196,11 @@ Repo-wide renaming/licensing/CI fixes are already done.
 
 ### Phase 3 — REPL polish + release
 
-- [ ] History file, completion (verb names, context-sensitive match indices), colored output honoring
-  `NO_COLOR`/non-tty stdout.
-- [ ] `Ctrl-C` → `Session::request_stop()` during long scans.
-- [ ] README, CHANGELOG; tag **v0.1.0**.
+- [ ] Completion (verb names, context-sensitive match indices), colored output honoring
+  `NO_COLOR`/non-tty stdout. No history file (see §0).
+- [x] `Ctrl-C` → `Session::request_stop()` during long scans.
+- [ ] README
+- [ ] tag **v0.1.0**.
 
 **Verify**: [ARCHITECTURE.md §8](./ARCHITECTURE.md#8-quality-gates--required-before-every-commit) gates at
 all three feature levels; dogfood against `fake_target` and a real long-running process.
