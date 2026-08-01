@@ -327,14 +327,19 @@ Everything in this phase lives behind the `cheat-list` feature (§2.1), off by d
 variants and `AppState::cheats` already exist gated the same way (landed ahead of this phase alongside the
 rest of `app/`'s `Msg` enum); this phase is the remaining `ui/` and persistence work.
 
-- [ ] `ui/cheat_view.rs`: add-from-match-view, freeze toggle, inline value edit via prompt, description
-  field.
-- [ ] `app/cheatlist.rs` persistence (TOML/JSON via `serde`, itself an optional dependency gated by
-  `cheat-list`); `Ctrl+S`/`Ctrl+L` wired to it.
+- [x] `ui/cheat_view.rs`: add-from-match-view (`a` in Match View), freeze toggle (`Space`), inline
+  value edit via prompt (`e`), description field (rendered; set at add time, no dedicated edit key
+  yet — not required by §4.3's fixed keymap).
+- [x] `app/cheatlist.rs` persistence (TOML via `serde`+`toml`, both optional deps gated by
+  `cheat-list`); `Ctrl+S`/`Ctrl+L` wired to it via an exclusive path-input prompt.
+- [x] Freeze is a live effect, not just a stored flag: `Msg::Tick`, driven by the event loop's idle
+  poll timeout, rewrites every frozen entry's value on its address a few times a second.
 
-**Verify**: manual — freeze a value, confirm it's rewritten repeatedly; save/reload a cheat list file, all
-via hotkeys; `cargo build -p gameconqueror` (default features) still compiles with no Cheat View reachable,
-and `cargo build -p gameconqueror --features cheat-list` builds it in.
+**Verify**: `tests/integration.rs`'s `freezing_a_cheat_rewrites_it_on_every_tick` (requires
+`--ignored`, see file header) covers the freeze/`Tick` round trip against `fake_target`; manually,
+freeze a value and confirm it's rewritten repeatedly, and save/reload a cheat list file, all via
+hotkeys. `cargo build -p gameconqueror` (default features) still compiles with no Cheat View
+reachable, and `cargo build -p gameconqueror --features cheat-list` builds it in.
 
 ### Phase 5 — HexView + help overlay
 

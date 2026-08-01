@@ -2,9 +2,13 @@ use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
+#[cfg(feature = "cheat-list")]
+use super::cheat_view;
 use super::install_panic_hook;
 use super::layout::render;
 use super::{input, keymap, match_view, process_picker, scan_panel};
+#[cfg(feature = "cheat-list")]
+use crate::app::PathPromptKind;
 use crate::app::{AppState, Focus, Msg, update};
 
 #[test]
@@ -372,4 +376,164 @@ fn enter_on_the_process_picker_attaches_to_the_selected_process() {
         state.status().is_some(),
         "expected Attach to report a status"
     );
+}
+
+#[test]
+#[cfg(feature = "cheat-list")]
+fn cheat_view_renders_without_panicking() {
+    let backend = TestBackend::new(60, 10);
+    let mut terminal = Terminal::new(backend).unwrap();
+    let mut state = AppState::default();
+    update(
+        &mut state,
+        Msg::AddCheat {
+            address: 0x1000,
+            description: "health".to_owned(),
+            value: libscanmem::value::Value::U32(100),
+        },
+    );
+
+    terminal
+        .draw(|frame| {
+            let area = frame.area();
+            cheat_view::render(frame, area, &state);
+        })
+        .unwrap();
+}
+
+#[test]
+#[cfg(feature = "cheat-list")]
+fn layout_renders_the_path_prompt_overlay_without_panicking() {
+    let backend = TestBackend::new(40, 10);
+    let mut terminal = Terminal::new(backend).unwrap();
+    let mut state = AppState::default();
+    update(&mut state, Msg::SaveCheatList);
+
+    terminal.draw(|frame| render(frame, &state)).unwrap();
+}
+
+#[test]
+#[cfg(feature = "cheat-list")]
+fn cheat_view_bindings_match_the_documented_table() {
+    let cases = [
+        (
+            KeyEvent::new(KeyCode::Up, KeyModifiers::NONE),
+            Msg::SelectPrev,
+        ),
+        (
+            KeyEvent::new(KeyCode::Char('k'), KeyModifiers::NONE),
+            Msg::SelectPrev,
+        ),
+        (
+            KeyEvent::new(KeyCode::Down, KeyModifiers::NONE),
+            Msg::SelectNext,
+        ),
+        (
+            KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE),
+            Msg::SelectNext,
+        ),
+    ];
+
+    for (key, expected) in cases {
+        assert_eq!(keymap::lookup_focus(Focus::CheatView, key), Some(expected));
+    }
+}
+
+#[test]
+#[cfg(feature = "cheat-list")]
+fn global_bindings_include_save_and_load_cheat_list() {
+    assert_eq!(
+        keymap::lookup_global(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL)),
+        Some(Msg::SaveCheatList)
+    );
+    assert_eq!(
+        keymap::lookup_global(KeyEvent::new(KeyCode::Char('l'), KeyModifiers::CONTROL)),
+        Some(Msg::LoadCheatList)
+    );
+}
+
+#[test]
+#[cfg(feature = "cheat-list")]
+fn space_toggles_freeze_on_the_selected_cheat() {
+    let mut state = AppState::default();
+    update(
+        &mut state,
+        Msg::AddCheat {
+            address: 0x1000,
+            description: String::new(),
+            value: libscanmem::value::Value::U32(100),
+        },
+    );
+    update(&mut state, Msg::FocusNext);
+    update(&mut state, Msg::FocusNext);
+    update(&mut state, Msg::FocusNext);
+    assert_eq!(state.focus(), Focus::CheatView);
+
+    input::handle_key(
+        &mut state,
+        KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE),
+    );
+
+    assert!(state.cheats()[0].frozen);
+}
+
+#[test]
+#[cfg(feature = "cheat-list")]
+fn e_begins_editing_the_selected_cheat_value() {
+    let mut state = AppState::default();
+    update(
+        &mut state,
+        Msg::AddCheat {
+            address: 0x1000,
+            description: String::new(),
+            value: libscanmem::value::Value::U32(100),
+        },
+    );
+    update(&mut state, Msg::FocusNext);
+    update(&mut state, Msg::FocusNext);
+    update(&mut state, Msg::FocusNext);
+    assert_eq!(state.focus(), Focus::CheatView);
+
+    input::handle_key(
+        &mut state,
+        KeyEvent::new(KeyCode::Char('e'), KeyModifiers::NONE),
+    );
+
+    assert!(state.search_active());
+    assert_eq!(state.cheat_value_input(), "100");
+}
+
+#[test]
+#[cfg(feature = "cheat-list")]
+fn a_on_match_view_without_a_session_does_not_add_a_cheat() {
+    let mut state = AppState::default();
+    update(&mut state, Msg::FocusNext);
+    update(&mut state, Msg::FocusNext);
+    assert_eq!(state.focus(), Focus::MatchView);
+
+    input::handle_key(
+        &mut state,
+        KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE),
+    );
+
+    assert!(state.cheats().is_empty());
+}
+
+#[test]
+#[cfg(feature = "cheat-list")]
+fn path_prompt_key_composes_input_and_confirms_on_enter() {
+    let mut state = AppState::default();
+    update(&mut state, Msg::LoadCheatList);
+    assert_eq!(state.path_prompt(), Some(PathPromptKind::Load));
+
+    input::handle_key(
+        &mut state,
+        KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE),
+    );
+    assert_eq!(state.path_input(), "x");
+
+    input::handle_key(&mut state, KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+
+    assert!(state.path_prompt().is_none());
+    assert_eq!(state.path_input(), "");
 }

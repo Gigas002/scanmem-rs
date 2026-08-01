@@ -66,7 +66,9 @@ The status bar at the bottom of the screen always shows the currently focused pa
 result of your last action, and a one-line hint of the global bindings.
 
 > Hex View is a placeholder in the current build (planned for a later phase) — focusing it shows a
-> "not yet implemented" message.
+> "not yet implemented" message. Cheat View only appears in this cycle at all when
+> `gameconqueror` is built with `--features cheat-list` (§1); otherwise `Tab` skips straight from
+> Match View to Hex View.
 
 ---
 
@@ -149,24 +151,61 @@ there's no separate "apply filter" step.
 As with the Process Picker, `Backspace` edits the filter while active and `Esc` clears it instead
 of keeping it.
 
-> Writing a new value to a selected match, and adding it to the cheat list, are implemented at the
-> `app`/state-machine level (`Msg::Write`, `Msg::AddCheat`) but not yet bound to a key in this
-> panel — that wiring lands with the Cheat View (§7) and Hex View phases.
+| Key | Action                                                       |
+| --- | ------------------------------------------------------------ |
+| `a` | Add the selected match to the cheat list _(`cheat-list` build only)_ |
+
+> Writing a new value directly to a selected match (without adding it to the cheat list first) is
+> implemented at the `app`/state-machine level (`Msg::Write`) but not yet bound to a key in this
+> panel — that wiring lands with the Hex View (§8).
+>
+> A cheat added this way stores only the single raw byte at the match's address (the same value
+> shown in the Value column), not the full width of a multi-byte scan (e.g. an `i32`) — a
+> limitation of the current match-tracking data, not of the cheat list itself. Freezing it still
+> writes exactly that one byte back, so it never corrupts neighboring bytes; it just won't hold a
+> wider value steady on its own. A future Hex View integration is expected to lift this limit by
+> reading the match's full width directly.
 
 ---
 
 ## 7. Cheat View _(requires the `cheat-list` feature)_
 
-Not yet built — this section will document freezing values, editing them inline, and
-saving/loading a cheat list once the Cheat View panel lands. Until then, focusing this panel (only
-reachable when `gameconqueror` is built with `--features cheat-list`) shows a placeholder.
+A table of every recorded cheat: address, description, value, and whether it's frozen. Build with
+`cargo build -p gameconqueror --features cheat-list` to enable it — it then also becomes reachable
+in the `Tab`/`Shift+Tab` focus cycle (§2).
 
-Planned global bindings, once implemented:
+| Key       | Action                                                             |
+| --------- | ------------------------------------------------------------------- |
+| `↑`/`↓` or `k`/`j` | Move the selection                                          |
+| `Space`   | Toggle freeze on the selected cheat                                |
+| `e`       | Edit the selected cheat's value inline (prefilled with its current value; `Enter` confirms, `Esc` cancels) |
 
-| Key      | Action              |
-| -------- | ------------------- |
-| `Ctrl+S` | Save the cheat list |
-| `Ctrl+L` | Load a cheat list   |
+**Freezing**: while a cheat is frozen, `gameconqueror` rewrites its stored value to its address on
+every idle tick (a few times a second) for as long as the TUI is running and a session stays
+attached — so even if the target process (or another tool) overwrites that address, it snaps back.
+Unfreezing (`Space` again) stops the rewriting; the address is left as last written.
+
+**Global bindings** (work from any panel, not just Cheat View):
+
+| Key      | Action                                                                                     |
+| -------- | -------------------------------------------------------------------------------------------- |
+| `Ctrl+S` | Save the cheat list — writes directly if a path is already known (from a prior save/load), otherwise opens a path prompt |
+| `Ctrl+L` | Load a cheat list — always opens a path prompt, replacing the current cheat list on success   |
+
+While a save/load path prompt is open, it captures every key exclusively: type the path, `Enter`
+confirms, `Esc` cancels without saving/loading. The cheat list file is TOML (not the legacy
+`gameconqueror`/GTK format) — see [gameconqueror-plan.md §3](./gameconqueror-plan.md) for the
+schema rationale.
+
+**Example** — freeze a match's value, then save the cheat list:
+
+1. From the Match View, select a match and press `a` to add it to the cheat list.
+2. `Tab` to the Cheat View — the new entry appears with an empty description.
+3. Press `Space` to freeze it; the status bar confirms.
+4. Press `Ctrl+S`; since no path is known yet, a prompt opens. Type a path (e.g.
+   `cheats.toml`) and press `Enter`. Subsequent `Ctrl+S` presses save to that same path directly.
+5. Press `Ctrl+L` any time afterward, type the same path, `Enter`, to reload it (e.g. after
+   restarting `gameconqueror` and reattaching).
 
 ---
 

@@ -15,6 +15,10 @@ pub fn lookup_global(key: KeyEvent) -> Option<Msg> {
         (KeyCode::Char('?'), KeyModifiers::NONE) => Some(Msg::ShowHelp),
         (KeyCode::F(1), _) => Some(Msg::ShowHelp),
         (KeyCode::Char('q'), KeyModifiers::CONTROL) => Some(Msg::Quit),
+        #[cfg(feature = "cheat-list")]
+        (KeyCode::Char('s'), KeyModifiers::CONTROL) => Some(Msg::SaveCheatList),
+        #[cfg(feature = "cheat-list")]
+        (KeyCode::Char('l'), KeyModifiers::CONTROL) => Some(Msg::LoadCheatList),
         (KeyCode::Esc, _) => Some(Msg::Dismiss),
         _ => None,
     }
@@ -50,7 +54,15 @@ pub fn lookup_focus(focus: Focus, key: KeyEvent) -> Option<Msg> {
             _ => None,
         },
         #[cfg(feature = "cheat-list")]
-        Focus::CheatView => None,
+        Focus::CheatView => match (key.code, key.modifiers) {
+            (KeyCode::Up, KeyModifiers::NONE) | (KeyCode::Char('k'), KeyModifiers::NONE) => {
+                Some(Msg::SelectPrev)
+            }
+            (KeyCode::Down, KeyModifiers::NONE) | (KeyCode::Char('j'), KeyModifiers::NONE) => {
+                Some(Msg::SelectNext)
+            }
+            _ => None,
+        },
         Focus::HexView => None,
     }
 }

@@ -1,6 +1,8 @@
 //! Ratatui shell: terminal lifecycle (raw mode, alternate screen, panic recovery) and the
 //! top-level event loop. Panel-specific rendering lives in sibling files (`layout.rs`, ...).
 
+#[cfg(feature = "cheat-list")]
+mod cheat_view;
 mod input;
 mod keymap;
 mod layout;
@@ -10,6 +12,8 @@ mod scan_panel;
 
 use std::io;
 use std::process::ExitCode;
+#[cfg(feature = "cheat-list")]
+use std::time::Duration;
 
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
@@ -78,6 +82,12 @@ pub fn run(state: &mut AppState, settings: &Settings) -> ExitCode {
     }
 }
 
+/// How often the event loop wakes up (when no key was pressed) to rewrite frozen cheat-list
+/// entries — only relevant with the `cheat-list` feature; without it, the loop blocks on
+/// [`event::read`] indefinitely instead.
+#[cfg(feature = "cheat-list")]
+const TICK_INTERVAL: Duration = Duration::from_millis(250);
+
 fn run_event_loop(state: &mut AppState) -> io::Result<()> {
     let backend = CrosstermBackend::new(io::stdout());
     let mut terminal = Terminal::new(backend)?;
@@ -85,8 +95,21 @@ fn run_event_loop(state: &mut AppState) -> io::Result<()> {
     loop {
         terminal.draw(|frame| layout::render(frame, state))?;
 
-        if let Event::Key(key) = event::read()? {
-            input::handle_key(state, key);
+        #[cfg(feature = "cheat-list")]
+        {
+            if event::poll(TICK_INTERVAL)? {
+                if let Event::Key(key) = event::read()? {
+                    input::handle_key(state, key);
+                }
+            } else {
+                crate::app::update(state, Msg::Tick);
+            }
+        }
+        #[cfg(not(feature = "cheat-list"))]
+        {
+            if let Event::Key(key) = event::read()? {
+                input::handle_key(state, key);
+            }
         }
 
         if state.should_quit() {

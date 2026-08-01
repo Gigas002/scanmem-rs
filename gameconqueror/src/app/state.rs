@@ -7,6 +7,8 @@ use libscanmem::session::{MatchView, Session};
 #[cfg(feature = "cheat-list")]
 use libscanmem::value::Value;
 use rustix::process::Pid;
+#[cfg(feature = "cheat-list")]
+use std::path::PathBuf;
 
 use crate::app::focus::Focus;
 
@@ -51,6 +53,14 @@ pub struct CheatEntry {
     pub frozen: bool,
 }
 
+/// Which cheat-list operation [`AppState::path_input`] is currently being typed for.
+#[cfg(feature = "cheat-list")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PathPromptKind {
+    Save,
+    Load,
+}
+
 /// One running process visible under `/proc`: a pid and its `comm` name (`"?"` if the name
 /// could not be read).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -86,6 +96,18 @@ pub struct AppState {
     pub(super) session: Option<Session>,
     #[cfg(feature = "cheat-list")]
     pub(super) cheats: Vec<CheatEntry>,
+    #[cfg(feature = "cheat-list")]
+    pub(super) cheat_selected: usize,
+    #[cfg(feature = "cheat-list")]
+    pub(super) cheat_value_input: String,
+    #[cfg(feature = "cheat-list")]
+    pub(super) cheat_editing_index: Option<usize>,
+    #[cfg(feature = "cheat-list")]
+    pub(super) cheat_list_path: Option<PathBuf>,
+    #[cfg(feature = "cheat-list")]
+    pub(super) path_prompt: Option<PathPromptKind>,
+    #[cfg(feature = "cheat-list")]
+    pub(super) path_input: String,
     pub(super) processes: Vec<ProcessEntry>,
     pub(super) process_filter: String,
     pub(super) process_selected: usize,
@@ -108,6 +130,18 @@ impl Default for AppState {
             session: None,
             #[cfg(feature = "cheat-list")]
             cheats: Vec::new(),
+            #[cfg(feature = "cheat-list")]
+            cheat_selected: 0,
+            #[cfg(feature = "cheat-list")]
+            cheat_value_input: String::new(),
+            #[cfg(feature = "cheat-list")]
+            cheat_editing_index: None,
+            #[cfg(feature = "cheat-list")]
+            cheat_list_path: None,
+            #[cfg(feature = "cheat-list")]
+            path_prompt: None,
+            #[cfg(feature = "cheat-list")]
+            path_input: String::new(),
             processes: Vec::new(),
             process_filter: String::new(),
             process_selected: 0,
@@ -134,6 +168,37 @@ impl AppState {
     #[cfg(feature = "cheat-list")]
     pub fn cheats(&self) -> &[CheatEntry] {
         &self.cheats
+    }
+
+    #[cfg(feature = "cheat-list")]
+    pub fn cheat_selected(&self) -> usize {
+        self.cheat_selected
+    }
+
+    /// The cheat currently highlighted in [`Self::cheats`], if any.
+    #[cfg(feature = "cheat-list")]
+    pub fn selected_cheat(&self) -> Option<&CheatEntry> {
+        self.cheats.get(self.cheat_selected)
+    }
+
+    #[cfg(feature = "cheat-list")]
+    pub fn cheat_value_input(&self) -> &str {
+        &self.cheat_value_input
+    }
+
+    #[cfg(feature = "cheat-list")]
+    pub fn cheat_list_path(&self) -> Option<&std::path::Path> {
+        self.cheat_list_path.as_deref()
+    }
+
+    #[cfg(feature = "cheat-list")]
+    pub fn path_prompt(&self) -> Option<PathPromptKind> {
+        self.path_prompt
+    }
+
+    #[cfg(feature = "cheat-list")]
+    pub fn path_input(&self) -> &str {
+        &self.path_input
     }
 
     pub fn focus(&self) -> Focus {

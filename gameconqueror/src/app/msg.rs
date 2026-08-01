@@ -38,6 +38,34 @@ pub enum Msg {
     /// value on success.
     #[cfg(feature = "cheat-list")]
     EditCheatValue { index: usize, value: Value },
+    /// Enter inline-edit mode for a cheat-list entry's value, prefilling the edit input with its
+    /// current value.
+    #[cfg(feature = "cheat-list")]
+    BeginEditCheatValue(usize),
+    /// Set the in-progress cheat-value edit input, replacing any previous one.
+    #[cfg(feature = "cheat-list")]
+    SetCheatValueInput(String),
+    /// Parse the in-progress cheat-value edit input against the entry's current value's width
+    /// and apply it via [`Msg::EditCheatValue`], then exit edit mode.
+    #[cfg(feature = "cheat-list")]
+    ConfirmCheatValueEdit,
+    /// Save the cheat list, using the last load/save path if known, otherwise opening a path
+    /// prompt.
+    #[cfg(feature = "cheat-list")]
+    SaveCheatList,
+    /// Open a path prompt to load a cheat list, replacing the current one on success.
+    #[cfg(feature = "cheat-list")]
+    LoadCheatList,
+    /// Set the in-progress save/load path prompt input, replacing any previous one.
+    #[cfg(feature = "cheat-list")]
+    SetPathInput(String),
+    /// Perform the save or load the path prompt was opened for, using its current input.
+    #[cfg(feature = "cheat-list")]
+    ConfirmPathPrompt,
+    /// Periodic tick from the event loop (not user-triggered): rewrites every frozen cheat-list
+    /// entry's stored value back to its address.
+    #[cfg(feature = "cheat-list")]
+    Tick,
     /// Rescan `/proc` for the current list of running processes.
     RefreshProcessList,
     /// Set the Process Picker's incremental filter query, replacing any previous one.

@@ -13,10 +13,13 @@ clap = { version = "4", features = ["derive"] }
 libscanmem = { path = "../libscanmem", version = "0.1.0" }
 ratatui = { version = "0.30", optional = true }
 rustix = { version = "1", features = ["process"] }
+serde = { version = "1", features = ["derive"], optional = true }
+thiserror = { workspace = true, optional = true }
+toml = { version = "1", optional = true }
 tracing = { workspace = true }
 tracing-subscriber = "0.3"
 
 [features]
 default = ["tui"]
 tui = ["dep:ratatui"]
-cheat-list = []
+cheat-list = ["dep:serde", "dep:thiserror", "dep:toml"]

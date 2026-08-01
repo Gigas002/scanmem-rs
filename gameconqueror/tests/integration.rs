@@ -19,9 +19,9 @@ use gameconqueror::app::{AppState, Msg, StatusLevel, update};
 use libscanmem::scanroutines::{MatchType, ScanDataType};
 #[cfg(feature = "cheat-list")]
 use libscanmem::session::{ScanCriterion, ScanExpr};
+use libscanmem::value::Value;
 #[cfg(feature = "cheat-list")]
 use libscanmem::value::{UserValue, parse_int};
-use libscanmem::value::Value;
 
 /// `fake_target` is a `libscanmem` binary, not `gameconqueror`'s own, so Cargo doesn't expose a
 /// `CARGO_BIN_EXE_fake_target` env var for it here; it lands next to `gameconqueror`'s own
@@ -124,6 +124,72 @@ fn attach_scan_narrow_write_and_verify_via_target_stdout() {
     update(&mut state, Msg::Detach);
     assert!(state.session().is_none());
     assert_eq!(state.status().unwrap().level, StatusLevel::Info);
+
+    let mut result_line = String::new();
+    stdout
+        .read_line(&mut result_line)
+        .expect("failed to read result line");
+    let observed: u32 = result_line
+        .trim()
+        .parse()
+        .expect("fake_target did not print a valid value");
+    assert_eq!(observed, frozen_value);
+
+    let status = child.wait().expect("fake_target did not exit cleanly");
+    assert!(status.success());
+}
+
+#[test]
+#[ignore = "requires CAP_SYS_PTRACE; run manually with `--ignored`"]
+#[cfg(feature = "cheat-list")]
+fn freezing_a_cheat_rewrites_it_on_every_tick() {
+    let mut child = Command::new(fake_target_path())
+        .stdout(Stdio::piped())
+        .spawn()
+        .expect("failed to spawn fake_target");
+
+    let mut stdout = BufReader::new(child.stdout.take().expect("piped stdout"));
+    let mut address_line = String::new();
+    stdout
+        .read_line(&mut address_line)
+        .expect("failed to read address line");
+    let address: usize = address_line
+        .trim()
+        .parse()
+        .expect("fake_target did not print a valid address");
+
+    let mut state = AppState::default();
+    update(&mut state, Msg::Attach(child.id()));
+    assert!(
+        state.session().is_some(),
+        "attach failed: {:?}",
+        state.status()
+    );
+
+    let frozen_value = 0x2468_ace0_u32;
+    update(
+        &mut state,
+        Msg::AddCheat {
+            address,
+            description: "frozen".to_owned(),
+            value: Value::U32(frozen_value),
+        },
+    );
+    update(&mut state, Msg::ToggleFreeze(0));
+    assert!(state.cheats()[0].frozen);
+
+    // Simulate the target (or another tool) overwriting the frozen address between ticks.
+    update(
+        &mut state,
+        Msg::Write {
+            address,
+            value: Value::U32(0x1111_1111),
+        },
+    );
+    update(&mut state, Msg::Tick);
+
+    update(&mut state, Msg::Detach);
+    assert!(state.session().is_none());
 
     let mut result_line = String::new();
     stdout

@@ -2,11 +2,15 @@
 //! machine. Only [`crate::settings::Settings`] crosses in from `main`; no CLI or raw config
 //! types, and no `ratatui`/`crossterm` types anywhere in this module tree.
 
+#[cfg(feature = "cheat-list")]
+mod cheatlist;
 mod focus;
 mod msg;
 mod process_list;
 mod state;
 
+#[cfg(feature = "cheat-list")]
+use std::path::PathBuf;
 use std::process::ExitCode;
 
 use libscanmem::error::ScanmemError;
@@ -18,9 +22,9 @@ use libscanmem::value::{self, UserValue};
 
 pub use focus::Focus;
 pub use msg::Msg;
-#[cfg(feature = "cheat-list")]
-pub use state::CheatEntry;
 pub use state::{AppState, MatchSortColumn, ProcessEntry, Status, StatusLevel};
+#[cfg(feature = "cheat-list")]
+pub use state::{CheatEntry, PathPromptKind};
 
 use crate::settings::Settings;
 
@@ -56,6 +60,35 @@ pub fn update(state: &mut AppState, msg: Msg) {
         Msg::ToggleFreeze(index) => Some(toggle_freeze(state, index)),
         #[cfg(feature = "cheat-list")]
         Msg::EditCheatValue { index, value } => Some(edit_cheat_value(state, index, value)),
+        #[cfg(feature = "cheat-list")]
+        Msg::BeginEditCheatValue(index) => Some(begin_edit_cheat_value(state, index)),
+        #[cfg(feature = "cheat-list")]
+        Msg::SetCheatValueInput(input) => {
+            state.cheat_value_input = input;
+            None
+        }
+        #[cfg(feature = "cheat-list")]
+        Msg::ConfirmCheatValueEdit => Some(confirm_cheat_value_edit(state)),
+        #[cfg(feature = "cheat-list")]
+        Msg::SaveCheatList => Some(save_cheat_list(state)),
+        #[cfg(feature = "cheat-list")]
+        Msg::LoadCheatList => {
+            state.path_prompt = Some(PathPromptKind::Load);
+            state.path_input.clear();
+            Some(Status::info("enter a path to load the cheat list"))
+        }
+        #[cfg(feature = "cheat-list")]
+        Msg::SetPathInput(input) => {
+            state.path_input = input;
+            None
+        }
+        #[cfg(feature = "cheat-list")]
+        Msg::ConfirmPathPrompt => Some(confirm_path_prompt(state)),
+        #[cfg(feature = "cheat-list")]
+        Msg::Tick => {
+            rewrite_frozen_cheats(state);
+            None
+        }
         Msg::RefreshProcessList => Some(refresh_process_list(state)),
         Msg::FilterProcesses(query) => {
             state.process_filter = query;
@@ -93,6 +126,8 @@ pub fn update(state: &mut AppState, msg: Msg) {
             match state.focus {
                 Focus::ProcessPicker => select_process(state, 1),
                 Focus::MatchView => select_match(state, 1),
+                #[cfg(feature = "cheat-list")]
+                Focus::CheatView => select_cheat(state, 1),
                 _ => {}
             }
             None
@@ -101,6 +136,8 @@ pub fn update(state: &mut AppState, msg: Msg) {
             match state.focus {
                 Focus::ProcessPicker => select_process(state, -1),
                 Focus::MatchView => select_match(state, -1),
+                #[cfg(feature = "cheat-list")]
+                Focus::CheatView => select_cheat(state, -1),
                 _ => {}
             }
             None
@@ -120,6 +157,8 @@ pub fn update(state: &mut AppState, msg: Msg) {
         Msg::Dismiss => {
             if state.help_visible {
                 state.help_visible = false;
+            } else if close_path_prompt_if_open(state) {
+                // handled
             } else if state.search_active {
                 state.search_active = false;
                 match state.focus {
@@ -133,7 +172,10 @@ pub fn update(state: &mut AppState, msg: Msg) {
                         state.match_selected = 0;
                     }
                     #[cfg(feature = "cheat-list")]
-                    Focus::CheatView => {}
+                    Focus::CheatView => {
+                        state.cheat_value_input.clear();
+                        state.cheat_editing_index = None;
+                    }
                     Focus::HexView => {}
                 }
             }
@@ -233,6 +275,155 @@ fn edit_cheat_value(state: &mut AppState, index: usize, value: Value) -> Status 
     }
 }
 
+#[cfg(feature = "cheat-list")]
+fn begin_edit_cheat_value(state: &mut AppState, index: usize) -> Status {
+    match state.cheats.get(index) {
+        Some(entry) => {
+            state.cheat_value_input = entry.value.to_string();
+            state.cheat_editing_index = Some(index);
+            state.search_active = true;
+            Status::info("editing cheat value — Enter to confirm, Esc to cancel")
+        }
+        None => cheat_index_out_of_range(index),
+    }
+}
+
+#[cfg(feature = "cheat-list")]
+fn confirm_cheat_value_edit(state: &mut AppState) -> Status {
+    let Some(index) = state.cheat_editing_index.take() else {
+        return Status::error("no cheat value is being edited");
+    };
+    state.search_active = false;
+    let input = std::mem::take(&mut state.cheat_value_input);
+
+    let Some(entry) = state.cheats.get(index) else {
+        return cheat_index_out_of_range(index);
+    };
+    match value_from_input(&entry.value, input.trim()) {
+        Ok(value) => edit_cheat_value(state, index, value),
+        Err(err) => Status::error(err),
+    }
+}
+
+/// Parses `input` into a [`Value`] of the same variant (and width) as `template`, mirroring
+/// [`build_scan_expr`]'s numeric handling but resolving to a single concrete width instead of a
+/// scan criterion.
+#[cfg(feature = "cheat-list")]
+fn value_from_input(template: &Value, input: &str) -> Result<Value, String> {
+    match template {
+        Value::Bytes(_) => parse_concrete_bytes(input).map(Value::Bytes),
+        Value::Str(_) => Ok(Value::Str(input.to_owned())),
+        _ => {
+            let number = value::parse_number(input).map_err(|err| err.to_string())?;
+            match template {
+                Value::U8(_) => number.u8.map(Value::U8),
+                Value::I8(_) => number.i8.map(Value::I8),
+                Value::U16(_) => number.u16.map(Value::U16),
+                Value::I16(_) => number.i16.map(Value::I16),
+                Value::U32(_) => number.u32.map(Value::U32),
+                Value::I32(_) => number.i32.map(Value::I32),
+                Value::U64(_) => number.u64.map(Value::U64),
+                Value::I64(_) => number.i64.map(Value::I64),
+                Value::F32(_) => number.f32.map(Value::F32),
+                Value::F64(_) => number.f64.map(Value::F64),
+                Value::Bytes(_) | Value::Str(_) => unreachable!(),
+            }
+            .ok_or_else(|| "value does not fit the cheat's data width".to_owned())
+        }
+    }
+}
+
+/// Parses whitespace-separated two-hex-digit bytes (as printed by [`Value`]'s `Display` impl for
+/// [`Value::Bytes`]) back into concrete bytes — unlike [`value::parse_bytearray`], wildcards
+/// (`??`) aren't valid here since a cheat's stored value must be a concrete byte string.
+#[cfg(feature = "cheat-list")]
+fn parse_concrete_bytes(input: &str) -> Result<Vec<u8>, String> {
+    let bytes = input
+        .split_whitespace()
+        .map(|token| {
+            u8::from_str_radix(token, 16).map_err(|_| format!("{token:?} is not two hex digits"))
+        })
+        .collect::<Result<Vec<u8>, String>>()?;
+
+    if bytes.is_empty() {
+        return Err("byte value must not be empty".to_owned());
+    }
+    Ok(bytes)
+}
+
+#[cfg(feature = "cheat-list")]
+fn save_cheat_list(state: &mut AppState) -> Status {
+    match state.cheat_list_path.clone() {
+        Some(path) => match cheatlist::save(&path, &state.cheats) {
+            Ok(()) => Status::info(format!("cheat list saved to {}", path.display())),
+            Err(err) => Status::error(err.to_string()),
+        },
+        None => {
+            state.path_prompt = Some(PathPromptKind::Save);
+            state.path_input.clear();
+            Status::info("enter a path to save the cheat list")
+        }
+    }
+}
+
+#[cfg(feature = "cheat-list")]
+fn confirm_path_prompt(state: &mut AppState) -> Status {
+    let Some(kind) = state.path_prompt.take() else {
+        return Status::error("no path is being entered");
+    };
+    let input = std::mem::take(&mut state.path_input);
+    let path = PathBuf::from(input.trim());
+
+    match kind {
+        PathPromptKind::Save => match cheatlist::save(&path, &state.cheats) {
+            Ok(()) => {
+                let text = format!("cheat list saved to {}", path.display());
+                state.cheat_list_path = Some(path);
+                Status::info(text)
+            }
+            Err(err) => Status::error(err.to_string()),
+        },
+        PathPromptKind::Load => match cheatlist::load(&path) {
+            Ok(cheats) => {
+                let text = format!("loaded {} cheat(s) from {}", cheats.len(), path.display());
+                state.cheats = cheats;
+                state.cheat_selected = 0;
+                state.cheat_list_path = Some(path);
+                Status::info(text)
+            }
+            Err(err) => Status::error(err.to_string()),
+        },
+    }
+}
+
+/// Rewrites every frozen cheat-list entry's stored value back to its address, ignoring
+/// individual write failures (a target may unmap the page between ticks; the next tick retries).
+#[cfg(feature = "cheat-list")]
+fn rewrite_frozen_cheats(state: &mut AppState) {
+    let Some(session) = state.session.as_mut() else {
+        return;
+    };
+    for entry in state.cheats.iter().filter(|entry| entry.frozen) {
+        let _ = session.write(entry.address, &entry.value);
+    }
+}
+
+#[cfg(feature = "cheat-list")]
+fn close_path_prompt_if_open(state: &mut AppState) -> bool {
+    if state.path_prompt.is_some() {
+        state.path_prompt = None;
+        state.path_input.clear();
+        true
+    } else {
+        false
+    }
+}
+
+#[cfg(not(feature = "cheat-list"))]
+fn close_path_prompt_if_open(_state: &mut AppState) -> bool {
+    false
+}
+
 fn refresh_process_list(state: &mut AppState) -> Status {
     state.processes = process_list::list_processes();
     state.process_selected = 0;
@@ -259,6 +450,18 @@ fn select_match(state: &mut AppState, delta: isize) {
     }
     let current = state.match_selected as isize;
     state.match_selected = (current + delta).rem_euclid(len as isize) as usize;
+}
+
+/// Moves `state.cheat_selected` by `delta` (`1` or `-1`), wrapping within the current cheat-list
+/// length; a no-op if the list is empty.
+#[cfg(feature = "cheat-list")]
+fn select_cheat(state: &mut AppState, delta: isize) {
+    let len = state.cheats.len();
+    if len == 0 {
+        return;
+    }
+    let current = state.cheat_selected as isize;
+    state.cheat_selected = (current + delta).rem_euclid(len as isize) as usize;
 }
 
 /// Every [`ScanDataType`] variant, in the order [`next_data_type`] cycles through.

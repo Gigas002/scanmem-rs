@@ -1,6 +1,8 @@
 //! Translates a `crossterm::event::KeyEvent` into a [`Msg`] via `ui/keymap.rs` and applies it —
 //! the only place in `ui/` that reads raw key events.
 
+#[cfg(feature = "cheat-list")]
+use libscanmem::value::Value;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
 use crate::app::{self, AppState, Focus, Msg};
@@ -15,6 +17,12 @@ use crate::ui::keymap;
 /// currently selected process.
 pub fn handle_key(state: &mut AppState, key: KeyEvent) {
     if key.kind != KeyEventKind::Press {
+        return;
+    }
+
+    #[cfg(feature = "cheat-list")]
+    if state.path_prompt().is_some() {
+        path_prompt_key(state, key);
         return;
     }
 
@@ -38,6 +46,73 @@ pub fn handle_key(state: &mut AppState, key: KeyEvent) {
     {
         app::update(state, Msg::Attach(pid));
     }
+
+    #[cfg(feature = "cheat-list")]
+    if let Some(msg) = cheat_view_action_msg(state, key) {
+        app::update(state, msg);
+        return;
+    }
+
+    #[cfg(feature = "cheat-list")]
+    if let Some(msg) = match_view_add_cheat_msg(state, key) {
+        app::update(state, msg);
+    }
+}
+
+/// Handles one key event while a cheat-list save/load path prompt is open, capturing every key
+/// exclusively (unlike the per-focus text fields below, nothing falls through to the global/
+/// per-focus keymap while a prompt is open).
+#[cfg(feature = "cheat-list")]
+fn path_prompt_key(state: &mut AppState, key: KeyEvent) {
+    let msg = match key.code {
+        KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+            let mut input = state.path_input().to_owned();
+            input.push(c);
+            Some(Msg::SetPathInput(input))
+        }
+        KeyCode::Backspace => {
+            let mut input = state.path_input().to_owned();
+            input.pop();
+            Some(Msg::SetPathInput(input))
+        }
+        KeyCode::Enter => Some(Msg::ConfirmPathPrompt),
+        KeyCode::Esc => Some(Msg::Dismiss),
+        _ => None,
+    };
+
+    if let Some(msg) = msg {
+        app::update(state, msg);
+    }
+}
+
+/// Builds the `Msg` for `Space`/`e` pressed on the Cheat View outside of value-edit mode,
+/// resolving the currently selected row from `AppState` — `ui/keymap.rs` can't do this since its
+/// lookups have no `AppState` access.
+#[cfg(feature = "cheat-list")]
+fn cheat_view_action_msg(state: &AppState, key: KeyEvent) -> Option<Msg> {
+    if state.focus() != Focus::CheatView {
+        return None;
+    }
+    let index = state.cheat_selected();
+    match key.code {
+        KeyCode::Char(' ') => Some(Msg::ToggleFreeze(index)),
+        KeyCode::Char('e') => Some(Msg::BeginEditCheatValue(index)),
+        _ => None,
+    }
+}
+
+/// Builds the `Msg` for `a` pressed on the Match View, adding the currently selected match to the
+/// cheat list (same `AppState`-access reasoning as [`cheat_view_action_msg`]).
+#[cfg(feature = "cheat-list")]
+fn match_view_add_cheat_msg(state: &AppState, key: KeyEvent) -> Option<Msg> {
+    if state.focus() != Focus::MatchView || key.code != KeyCode::Char('a') {
+        return None;
+    }
+    state.selected_match().map(|entry| Msg::AddCheat {
+        address: entry.address,
+        description: String::new(),
+        value: Value::U8(entry.old_value),
+    })
 }
 
 /// Builds the `Msg` for a key pressed while the focused panel's text field is active, or `None`
@@ -48,7 +123,7 @@ fn search_input_msg(state: &AppState, key: KeyEvent) -> Option<Msg> {
         Focus::ScanPanel => scan_input_msg(state, key),
         Focus::MatchView => match_filter_msg(state, key),
         #[cfg(feature = "cheat-list")]
-        Focus::CheatView => None,
+        Focus::CheatView => cheat_value_msg(state, key),
         Focus::HexView => None,
     }
 }
@@ -107,6 +182,25 @@ fn match_filter_msg(state: &AppState, key: KeyEvent) -> Option<Msg> {
         KeyCode::Enter => Some(Msg::ToggleSearch),
         KeyCode::Up => Some(Msg::SelectPrev),
         KeyCode::Down => Some(Msg::SelectNext),
+        _ => None,
+    }
+}
+
+/// Builds the `Msg` for a key pressed while the Cheat View's value-edit field is active.
+#[cfg(feature = "cheat-list")]
+fn cheat_value_msg(state: &AppState, key: KeyEvent) -> Option<Msg> {
+    match key.code {
+        KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+            let mut input = state.cheat_value_input().to_owned();
+            input.push(c);
+            Some(Msg::SetCheatValueInput(input))
+        }
+        KeyCode::Backspace => {
+            let mut input = state.cheat_value_input().to_owned();
+            input.pop();
+            Some(Msg::SetCheatValueInput(input))
+        }
+        KeyCode::Enter => Some(Msg::ConfirmCheatValueEdit),
         _ => None,
     }
 }
