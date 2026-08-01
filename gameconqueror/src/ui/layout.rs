@@ -14,7 +14,7 @@ use crate::app::PathPromptKind;
 use crate::app::{AppState, Focus, StatusLevel};
 #[cfg(feature = "cheat-list")]
 use crate::ui::cheat_view;
-use crate::ui::{match_view, process_picker, scan_panel};
+use crate::ui::{help_overlay, hex_view, match_view, process_picker, scan_panel};
 
 /// Renders the current frame: the focused panel's body, then a status bar showing the current
 /// focus, the last status message (if any), and a one-line hint of the global bindings.
@@ -27,7 +27,7 @@ pub fn render(frame: &mut Frame, state: &AppState) {
         Focus::MatchView => match_view::render(frame, chunks[0], state),
         #[cfg(feature = "cheat-list")]
         Focus::CheatView => cheat_view::render(frame, chunks[0], state),
-        other => frame.render_widget(placeholder(other), chunks[0]),
+        Focus::HexView => hex_view::render(frame, chunks[0], state),
     }
 
     frame.render_widget(status_bar(state), chunks[1]);
@@ -36,10 +36,10 @@ pub fn render(frame: &mut Frame, state: &AppState) {
     if let Some(prompt) = state.path_prompt() {
         render_path_prompt(frame, prompt, state.path_input());
     }
-}
 
-fn placeholder(focus: Focus) -> Paragraph<'static> {
-    Paragraph::new(format!("{focus} — not yet implemented"))
+    if state.help_visible() {
+        help_overlay::render(frame, state.focus());
+    }
 }
 
 fn status_bar(state: &AppState) -> Paragraph<'_> {

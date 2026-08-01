@@ -21,6 +21,16 @@ pub enum Msg {
     ResetScan,
     /// Write a value into the target's address space.
     Write { address: usize, value: Value },
+    /// Load a window of session memory centered on `address` into the Hex View buffer and switch
+    /// focus to it.
+    FocusHexView(usize),
+    /// Move the Hex View cursor by this many bytes, clamped to the loaded buffer.
+    MoveHexCursor(isize),
+    /// Set the Hex View's in-progress byte-edit input at the cursor, replacing any previous one.
+    SetHexEditInput(String),
+    /// Parse the in-progress byte edit and write it to the cursor's address, updating the loaded
+    /// buffer on success.
+    CommitHexEdit,
     /// Record a new cheat-list entry.
     #[cfg(feature = "cheat-list")]
     AddCheat {

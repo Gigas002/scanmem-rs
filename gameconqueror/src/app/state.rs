@@ -118,6 +118,10 @@ pub struct AppState {
     pub(super) match_sort: MatchSortColumn,
     pub(super) match_filter: String,
     pub(super) match_selected: usize,
+    pub(super) hex_buffer: Vec<u8>,
+    pub(super) hex_base_address: usize,
+    pub(super) hex_cursor: usize,
+    pub(super) hex_edit_input: String,
     pub(super) focus: Focus,
     pub(super) help_visible: bool,
     pub(super) quit: bool,
@@ -152,6 +156,10 @@ impl Default for AppState {
             match_sort: MatchSortColumn::Address,
             match_filter: String::new(),
             match_selected: 0,
+            hex_buffer: Vec::new(),
+            hex_base_address: 0,
+            hex_cursor: 0,
+            hex_edit_input: String::new(),
             focus: Focus::default(),
             help_visible: false,
             quit: false,
@@ -309,6 +317,36 @@ impl AppState {
     /// The match currently highlighted in [`Self::filtered_matches`], if any.
     pub fn selected_match(&self) -> Option<MatchView> {
         self.filtered_matches().into_iter().nth(self.match_selected)
+    }
+
+    /// The bytes currently loaded into the Hex View, starting at [`Self::hex_base_address`].
+    pub fn hex_buffer(&self) -> &[u8] {
+        &self.hex_buffer
+    }
+
+    /// The address [`Self::hex_buffer`]'s first byte is loaded from.
+    pub fn hex_base_address(&self) -> usize {
+        self.hex_base_address
+    }
+
+    /// The Hex View cursor's offset within [`Self::hex_buffer`].
+    pub fn hex_cursor(&self) -> usize {
+        self.hex_cursor
+    }
+
+    /// The address of the byte currently under the Hex View cursor, or `None` if no bytes are
+    /// loaded.
+    pub fn hex_cursor_address(&self) -> Option<usize> {
+        if self.hex_cursor < self.hex_buffer.len() {
+            Some(self.hex_base_address + self.hex_cursor)
+        } else {
+            None
+        }
+    }
+
+    /// The Hex View's in-progress byte-edit input at the cursor, if any.
+    pub fn hex_edit_input(&self) -> &str {
+        &self.hex_edit_input
     }
 
     /// Attaches to `pid`, replacing any previously attached session, and returns how many

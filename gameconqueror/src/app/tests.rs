@@ -105,6 +105,7 @@ fn operations_that_require_a_session_report_not_attached() {
             address: 0x1000,
             value: Value::U32(1),
         },
+        Msg::FocusHexView(0x1000),
     ] {
         let mut state = AppState::default();
 
@@ -724,6 +725,75 @@ fn dismiss_closes_an_open_path_prompt_before_touching_search_state() {
 
     assert!(state.path_prompt().is_none());
     assert!(state.search_active());
+}
+
+#[test]
+fn move_hex_cursor_is_a_no_op_on_an_empty_buffer() {
+    let mut state = AppState::default();
+
+    update(&mut state, Msg::MoveHexCursor(1));
+    update(&mut state, Msg::MoveHexCursor(-1));
+
+    assert_eq!(state.hex_cursor(), 0);
+    assert!(state.hex_buffer().is_empty());
+}
+
+#[test]
+fn set_hex_edit_input_replaces_the_value() {
+    let mut state = AppState::default();
+
+    update(&mut state, Msg::SetHexEditInput("3f".to_owned()));
+
+    assert_eq!(state.hex_edit_input(), "3f");
+}
+
+#[test]
+fn commit_hex_edit_without_input_reports_an_error() {
+    let mut state = AppState::default();
+
+    update(&mut state, Msg::CommitHexEdit);
+
+    let status = state.status().expect("expected a status message");
+    assert_eq!(status.level, StatusLevel::Error);
+    assert!(status.text.contains("no byte value entered"));
+    assert_eq!(state.hex_edit_input(), "");
+}
+
+#[test]
+fn commit_hex_edit_with_invalid_hex_reports_an_error() {
+    let mut state = AppState::default();
+    update(&mut state, Msg::SetHexEditInput("zz".to_owned()));
+
+    update(&mut state, Msg::CommitHexEdit);
+
+    let status = state.status().expect("expected a status message");
+    assert_eq!(status.level, StatusLevel::Error);
+    assert!(status.text.contains("not a valid hex byte"));
+}
+
+#[test]
+fn commit_hex_edit_with_valid_hex_but_no_session_reports_not_attached() {
+    let mut state = AppState::default();
+    update(&mut state, Msg::SetHexEditInput("3f".to_owned()));
+
+    update(&mut state, Msg::CommitHexEdit);
+
+    let status = state.status().expect("expected a status message");
+    assert_eq!(status.level, StatusLevel::Error);
+    assert!(status.text.contains("no process is attached"));
+}
+
+#[test]
+fn dismiss_clears_an_in_progress_hex_edit() {
+    let mut state = AppState::default();
+    while state.focus() != Focus::HexView {
+        update(&mut state, Msg::FocusNext);
+    }
+    update(&mut state, Msg::SetHexEditInput("3".to_owned()));
+
+    update(&mut state, Msg::Dismiss);
+
+    assert_eq!(state.hex_edit_input(), "");
 }
 
 #[cfg(feature = "cheat-list")]

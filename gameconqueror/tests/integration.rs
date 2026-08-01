@@ -14,7 +14,7 @@ use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
-use gameconqueror::app::{AppState, Msg, StatusLevel, update};
+use gameconqueror::app::{AppState, Focus, Msg, StatusLevel, update};
 #[cfg(feature = "cheat-list")]
 use libscanmem::scanroutines::{MatchType, ScanDataType};
 #[cfg(feature = "cheat-list")]
@@ -262,4 +262,59 @@ fn scan_panel_run_scan_first_scan_and_narrow_via_typed_input() {
 
     child.kill().expect("failed to kill fake_target");
     child.wait().expect("fake_target did not exit cleanly");
+}
+
+#[test]
+#[ignore = "requires CAP_SYS_PTRACE; run manually with `--ignored`"]
+fn hex_view_focus_and_commit_edit_writes_a_single_byte() {
+    let mut child = Command::new(fake_target_path())
+        .stdout(Stdio::piped())
+        .spawn()
+        .expect("failed to spawn fake_target");
+
+    let mut stdout = BufReader::new(child.stdout.take().expect("piped stdout"));
+    let mut address_line = String::new();
+    stdout
+        .read_line(&mut address_line)
+        .expect("failed to read address line");
+    let address: usize = address_line
+        .trim()
+        .parse()
+        .expect("fake_target did not print a valid address");
+
+    let mut state = AppState::default();
+    update(&mut state, Msg::Attach(child.id()));
+    assert!(
+        state.session().is_some(),
+        "attach failed: {:?}",
+        state.status()
+    );
+
+    update(&mut state, Msg::FocusHexView(address));
+    assert_eq!(state.status().unwrap().level, StatusLevel::Info);
+    assert_eq!(state.focus(), Focus::HexView);
+    assert_eq!(state.hex_cursor_address(), Some(address));
+
+    // `fake_target` seeds 0xdeadbeef little-endian; overwriting the low byte with 0x42 yields
+    // 0xdeadbe42, which is enough to trip its "value changed" watch loop.
+    update(&mut state, Msg::SetHexEditInput("42".to_owned()));
+    update(&mut state, Msg::CommitHexEdit);
+    assert_eq!(state.status().unwrap().level, StatusLevel::Info);
+    assert_eq!(state.hex_buffer()[state.hex_cursor()], 0x42);
+
+    update(&mut state, Msg::Detach);
+    assert!(state.session().is_none());
+
+    let mut result_line = String::new();
+    stdout
+        .read_line(&mut result_line)
+        .expect("failed to read result line");
+    let observed: u32 = result_line
+        .trim()
+        .parse()
+        .expect("fake_target did not print a valid value");
+    assert_eq!(observed, 0xdeadbe42);
+
+    let status = child.wait().expect("fake_target did not exit cleanly");
+    assert!(status.success());
 }

@@ -3,6 +3,8 @@
 
 #[cfg(feature = "cheat-list")]
 mod cheat_view;
+mod help_overlay;
+mod hex_view;
 mod input;
 mod keymap;
 mod layout;

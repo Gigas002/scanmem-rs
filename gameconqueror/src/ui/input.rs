@@ -45,6 +45,24 @@ pub fn handle_key(state: &mut AppState, key: KeyEvent) {
         && let Some(pid) = state.selected_process().map(|process| process.pid)
     {
         app::update(state, Msg::Attach(pid));
+        return;
+    }
+
+    if let Some(msg) = hex_view_edit_msg(state, key) {
+        app::update(state, msg);
+        return;
+    }
+
+    #[cfg_attr(not(feature = "cheat-list"), allow(clippy::needless_return))]
+    if let Some(msg) = match_view_focus_hex_msg(state, key) {
+        app::update(state, msg);
+        return;
+    }
+
+    #[cfg(feature = "cheat-list")]
+    if let Some(msg) = cheat_view_focus_hex_msg(state, key) {
+        app::update(state, msg);
+        return;
     }
 
     #[cfg(feature = "cheat-list")]
@@ -113,6 +131,52 @@ fn match_view_add_cheat_msg(state: &AppState, key: KeyEvent) -> Option<Msg> {
         description: String::new(),
         value: Value::U8(entry.old_value),
     })
+}
+
+/// Builds the `Msg` for a hex-digit or `Backspace` key pressed while the Hex View is focused,
+/// composing the in-progress byte edit at the cursor — `ui/keymap.rs` can't do this since it
+/// needs the current [`AppState::hex_edit_input`] to append/remove a digit. `None` for any other
+/// key so it falls through to the normal global/per-focus lookup (arrows, `Enter`, `Esc`).
+fn hex_view_edit_msg(state: &AppState, key: KeyEvent) -> Option<Msg> {
+    if state.focus() != Focus::HexView {
+        return None;
+    }
+    match key.code {
+        KeyCode::Char(c) if c.is_ascii_hexdigit() && state.hex_edit_input().len() < 2 => {
+            let mut input = state.hex_edit_input().to_owned();
+            input.push(c);
+            Some(Msg::SetHexEditInput(input))
+        }
+        KeyCode::Backspace => {
+            let mut input = state.hex_edit_input().to_owned();
+            input.pop();
+            Some(Msg::SetHexEditInput(input))
+        }
+        _ => None,
+    }
+}
+
+/// Builds the `Msg` for `h` pressed on the Match View, focusing the Hex View on the selected
+/// match's address (same `AppState`-access reasoning as [`match_view_add_cheat_msg`]).
+fn match_view_focus_hex_msg(state: &AppState, key: KeyEvent) -> Option<Msg> {
+    if state.focus() != Focus::MatchView || key.code != KeyCode::Char('h') {
+        return None;
+    }
+    state
+        .selected_match()
+        .map(|entry| Msg::FocusHexView(entry.address))
+}
+
+/// Builds the `Msg` for `h` pressed on the Cheat View, focusing the Hex View on the selected
+/// cheat's address (same `AppState`-access reasoning as [`match_view_add_cheat_msg`]).
+#[cfg(feature = "cheat-list")]
+fn cheat_view_focus_hex_msg(state: &AppState, key: KeyEvent) -> Option<Msg> {
+    if state.focus() != Focus::CheatView || key.code != KeyCode::Char('h') {
+        return None;
+    }
+    state
+        .selected_cheat()
+        .map(|entry| Msg::FocusHexView(entry.address))
 }
 
 /// Builds the `Msg` for a key pressed while the focused panel's text field is active, or `None`

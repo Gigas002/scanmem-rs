@@ -343,11 +343,11 @@ reachable, and `cargo build -p gameconqueror --features cheat-list` builds it in
 
 ### Phase 5 — HexView + help overlay
 
-- [ ] `ui/hex_view.rs`: 3-pane offset/hex/ascii view over a byte buffer, cursor/selection in `AppState`,
+- [x] `ui/hex_view.rs`: 3-pane offset/hex/ascii view over a byte buffer, cursor/selection in `AppState`,
   styled `Span`s for highlighting.
-- [ ] Develop/test against a fake in-memory payload first, then wire to `Session::read`/`write` for a
+- [x] Develop/test against a fake in-memory payload first, then wire to `Session::read`/`write` for a
   selected match's surrounding bytes.
-- [ ] `ui/help_overlay.rs`: `?`/`F1` popup generated from `ui/keymap.rs`.
+- [x] `ui/help_overlay.rs`: `?`/`F1` popup generated from `ui/keymap.rs`.
 
 **Verify**: manual — open hex view on a known address, edit a byte via the keyboard, confirm the write
 round-trips through `Session`; help overlay shows accurate bindings in every focus.

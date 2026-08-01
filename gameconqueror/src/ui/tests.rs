@@ -6,7 +6,7 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use super::cheat_view;
 use super::install_panic_hook;
 use super::layout::render;
-use super::{input, keymap, match_view, process_picker, scan_panel};
+use super::{help_overlay, hex_view, input, keymap, match_view, process_picker, scan_panel};
 #[cfg(feature = "cheat-list")]
 use crate::app::PathPromptKind;
 use crate::app::{AppState, Focus, Msg, update};
@@ -66,6 +66,49 @@ fn match_view_renders_without_panicking() {
             match_view::render(frame, area, &state);
         })
         .unwrap();
+}
+
+#[test]
+fn hex_view_renders_without_panicking_on_an_empty_buffer() {
+    let backend = TestBackend::new(60, 10);
+    let mut terminal = Terminal::new(backend).unwrap();
+    let state = AppState::default();
+
+    terminal
+        .draw(|frame| {
+            let area = frame.area();
+            hex_view::render(frame, area, &state);
+        })
+        .unwrap();
+}
+
+#[test]
+fn help_overlay_renders_without_panicking_for_every_focus() {
+    let backend = TestBackend::new(60, 20);
+    let mut terminal = Terminal::new(backend).unwrap();
+
+    for focus in [
+        Focus::ProcessPicker,
+        Focus::ScanPanel,
+        Focus::MatchView,
+        #[cfg(feature = "cheat-list")]
+        Focus::CheatView,
+        Focus::HexView,
+    ] {
+        terminal
+            .draw(|frame| help_overlay::render(frame, focus))
+            .unwrap();
+    }
+}
+
+#[test]
+fn layout_renders_the_help_overlay_without_panicking() {
+    let backend = TestBackend::new(40, 10);
+    let mut terminal = Terminal::new(backend).unwrap();
+    let mut state = AppState::default();
+    update(&mut state, Msg::ShowHelp);
+
+    terminal.draw(|frame| render(frame, &state)).unwrap();
 }
 
 #[test]
@@ -192,6 +235,36 @@ fn match_view_bindings_match_the_documented_table() {
 
     for (key, expected) in cases {
         assert_eq!(keymap::lookup_focus(Focus::MatchView, key), Some(expected));
+    }
+}
+
+#[test]
+fn hex_view_bindings_match_the_documented_table() {
+    let cases = [
+        (
+            KeyEvent::new(KeyCode::Left, KeyModifiers::NONE),
+            Msg::MoveHexCursor(-1),
+        ),
+        (
+            KeyEvent::new(KeyCode::Right, KeyModifiers::NONE),
+            Msg::MoveHexCursor(1),
+        ),
+        (
+            KeyEvent::new(KeyCode::Up, KeyModifiers::NONE),
+            Msg::MoveHexCursor(-(hex_view::BYTES_PER_ROW as isize)),
+        ),
+        (
+            KeyEvent::new(KeyCode::Down, KeyModifiers::NONE),
+            Msg::MoveHexCursor(hex_view::BYTES_PER_ROW as isize),
+        ),
+        (
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+            Msg::CommitHexEdit,
+        ),
+    ];
+
+    for (key, expected) in cases {
+        assert_eq!(keymap::lookup_focus(Focus::HexView, key), Some(expected));
     }
 }
 
@@ -379,6 +452,58 @@ fn enter_on_the_process_picker_attaches_to_the_selected_process() {
 }
 
 #[test]
+fn h_on_match_view_without_a_session_does_not_focus_the_hex_view() {
+    let mut state = AppState::default();
+    update(&mut state, Msg::FocusNext);
+    update(&mut state, Msg::FocusNext);
+    assert_eq!(state.focus(), Focus::MatchView);
+
+    input::handle_key(
+        &mut state,
+        KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE),
+    );
+
+    assert_eq!(state.focus(), Focus::MatchView);
+}
+
+#[test]
+fn typing_hex_digits_on_the_hex_view_composes_the_byte_edit_and_ignores_non_hex_chars() {
+    let mut state = AppState::default();
+    while state.focus() != Focus::HexView {
+        update(&mut state, Msg::FocusNext);
+    }
+
+    input::handle_key(
+        &mut state,
+        KeyEvent::new(KeyCode::Char('z'), KeyModifiers::NONE),
+    );
+    assert_eq!(state.hex_edit_input(), "");
+
+    input::handle_key(
+        &mut state,
+        KeyEvent::new(KeyCode::Char('3'), KeyModifiers::NONE),
+    );
+    input::handle_key(
+        &mut state,
+        KeyEvent::new(KeyCode::Char('f'), KeyModifiers::NONE),
+    );
+    assert_eq!(state.hex_edit_input(), "3f");
+
+    // A third digit is ignored once two are already composed.
+    input::handle_key(
+        &mut state,
+        KeyEvent::new(KeyCode::Char('1'), KeyModifiers::NONE),
+    );
+    assert_eq!(state.hex_edit_input(), "3f");
+
+    input::handle_key(
+        &mut state,
+        KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE),
+    );
+    assert_eq!(state.hex_edit_input(), "3");
+}
+
+#[test]
 #[cfg(feature = "cheat-list")]
 fn cheat_view_renders_without_panicking() {
     let backend = TestBackend::new(60, 10);
@@ -517,6 +642,31 @@ fn a_on_match_view_without_a_session_does_not_add_a_cheat() {
     );
 
     assert!(state.cheats().is_empty());
+}
+
+#[test]
+#[cfg(feature = "cheat-list")]
+fn h_on_cheat_view_without_a_session_does_not_focus_the_hex_view() {
+    let mut state = AppState::default();
+    update(
+        &mut state,
+        Msg::AddCheat {
+            address: 0x1000,
+            description: String::new(),
+            value: libscanmem::value::Value::U32(100),
+        },
+    );
+    update(&mut state, Msg::FocusNext);
+    update(&mut state, Msg::FocusNext);
+    update(&mut state, Msg::FocusNext);
+    assert_eq!(state.focus(), Focus::CheatView);
+
+    input::handle_key(
+        &mut state,
+        KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE),
+    );
+
+    assert_eq!(state.focus(), Focus::CheatView);
 }
 
 #[test]

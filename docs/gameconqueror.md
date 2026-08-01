@@ -65,10 +65,8 @@ Process Picker → Scan Panel → Match View → [Cheat View, if built with `che
 The status bar at the bottom of the screen always shows the currently focused panel's name, the
 result of your last action, and a one-line hint of the global bindings.
 
-> Hex View is a placeholder in the current build (planned for a later phase) — focusing it shows a
-> "not yet implemented" message. Cheat View only appears in this cycle at all when
-> `gameconqueror` is built with `--features cheat-list` (§1); otherwise `Tab` skips straight from
-> Match View to Hex View.
+> Cheat View only appears in this cycle at all when `gameconqueror` is built with
+> `--features cheat-list` (§1); otherwise `Tab` skips straight from Match View to Hex View.
 
 ---
 
@@ -78,7 +76,7 @@ result of your last action, and a one-line hint of the global bindings.
 | ----------- | ------------------------------------------------------------------------------------------------ |
 | `Tab`       | Focus next panel                                                                                 |
 | `Shift+Tab` | Focus previous panel                                                                             |
-| `?` or `F1` | Toggle the help overlay for the current panel _(planned — not yet wired up)_                     |
+| `?` or `F1` | Toggle the help overlay for the current panel — lists every binding active for the focused panel, generated straight from `ui/keymap.rs` |
 | `Ctrl+Q`    | Quit                                                                                             |
 | `Esc`       | Dismiss — closes the help overlay if open, otherwise cancels an active search/edit and clears it |
 
@@ -153,18 +151,15 @@ of keeping it.
 
 | Key | Action                                                       |
 | --- | ------------------------------------------------------------ |
+| `h` | Open the Hex View on the bytes around the selected match      |
 | `a` | Add the selected match to the cheat list _(`cheat-list` build only)_ |
 
-> Writing a new value directly to a selected match (without adding it to the cheat list first) is
-> implemented at the `app`/state-machine level (`Msg::Write`) but not yet bound to a key in this
-> panel — that wiring lands with the Hex View (§8).
->
-> A cheat added this way stores only the single raw byte at the match's address (the same value
+> A cheat added via `a` stores only the single raw byte at the match's address (the same value
 > shown in the Value column), not the full width of a multi-byte scan (e.g. an `i32`) — a
 > limitation of the current match-tracking data, not of the cheat list itself. Freezing it still
 > writes exactly that one byte back, so it never corrupts neighboring bytes; it just won't hold a
-> wider value steady on its own. A future Hex View integration is expected to lift this limit by
-> reading the match's full width directly.
+> wider value steady on its own. Opening the Hex View with `h` instead lets you edit any byte
+> directly, independent of the match's tracked width.
 
 ---
 
@@ -179,6 +174,7 @@ in the `Tab`/`Shift+Tab` focus cycle (§2).
 | `↑`/`↓` or `k`/`j` | Move the selection                                          |
 | `Space`   | Toggle freeze on the selected cheat                                |
 | `e`       | Edit the selected cheat's value inline (prefilled with its current value; `Enter` confirms, `Esc` cancels) |
+| `h`       | Open the Hex View on the bytes around the selected cheat            |
 
 **Freezing**: while a cheat is frozen, `gameconqueror` rewrites its stored value to its address on
 every idle tick (a few times a second) for as long as the TUI is running and a session stays
@@ -209,10 +205,31 @@ schema rationale.
 
 ---
 
-## 8. Hex View _(planned)_
+## 8. Hex View
 
-Not yet built. Will provide a 3-pane offset/hex/ASCII view over the bytes around a selected match,
-navigable and editable with the arrow keys and `Enter`.
+A 3-pane offset/hex/ASCII view over a window of bytes around an address, opened by pressing `h` on
+a selected row in the Match View (§6) or Cheat View (§7) — not directly reachable via `Tab` with
+useful data until then, since it has nothing to show until a row is picked.
+
+| Key                 | Action                                                              |
+| ------------------- | -------------------------------------------------------------------- |
+| `←`/`→`              | Move the cursor one byte left/right                                 |
+| `↑`/`↓`              | Move the cursor one row (16 bytes) up/down                          |
+| `0`-`9`, `a`-`f`     | Type a hex digit into the byte under the cursor (up to two digits)  |
+| `Backspace`          | Remove the last typed digit                                         |
+| `Enter`              | Write the composed byte to the target's address space               |
+| `Esc`                | Cancel an in-progress byte edit without writing it                  |
+
+The cursor doesn't scroll past the loaded window — re-open the Hex View (`h`) from a different row
+to look elsewhere. Composing a byte edit doesn't touch memory until `Enter` commits it; the status
+bar reports the write's result (or why it failed, e.g. no process attached).
+
+**Example** — edit a byte directly, without adding it to the cheat list first:
+
+1. From the Match View, select a match and press `h` — the Hex View opens with the cursor on that
+   match's address.
+2. Type two hex digits, e.g. `4` then `2`.
+3. Press `Enter` — the status bar confirms the write, or reports why it failed.
 
 ---
 

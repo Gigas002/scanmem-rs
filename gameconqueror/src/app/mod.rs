@@ -16,9 +16,7 @@ use std::process::ExitCode;
 use libscanmem::error::ScanmemError;
 use libscanmem::scanroutines::{MatchType, ScanDataType};
 use libscanmem::session::{ScanCriterion, ScanExpr, Session};
-#[cfg(feature = "cheat-list")]
-use libscanmem::value::Value;
-use libscanmem::value::{self, UserValue};
+use libscanmem::value::{self, UserValue, Value};
 
 pub use focus::Focus;
 pub use msg::Msg;
@@ -48,6 +46,16 @@ pub fn update(state: &mut AppState, msg: Msg) {
         Msg::Write { address, value } => Some(with_session(state, |session| {
             session.write(address, &value).map(|()| "ok".to_owned())
         })),
+        Msg::FocusHexView(address) => Some(focus_hex_view(state, address)),
+        Msg::MoveHexCursor(delta) => {
+            move_hex_cursor(state, delta);
+            None
+        }
+        Msg::SetHexEditInput(input) => {
+            state.hex_edit_input = input;
+            None
+        }
+        Msg::CommitHexEdit => Some(commit_hex_edit(state)),
         #[cfg(feature = "cheat-list")]
         Msg::AddCheat {
             address,
@@ -159,6 +167,8 @@ pub fn update(state: &mut AppState, msg: Msg) {
                 state.help_visible = false;
             } else if close_path_prompt_if_open(state) {
                 // handled
+            } else if state.focus == Focus::HexView && !state.hex_edit_input.is_empty() {
+                state.hex_edit_input.clear();
             } else if state.search_active {
                 state.search_active = false;
                 match state.focus {
@@ -219,6 +229,78 @@ fn reset_scan(state: &mut AppState) -> Status {
             Status::info("scan reset")
         }
         None => not_attached(),
+    }
+}
+
+/// Bytes of session memory loaded into the Hex View on either side of the focused address.
+const HEX_VIEW_BUFFER_LEN: usize = 256;
+
+/// Loads [`HEX_VIEW_BUFFER_LEN`] bytes of session memory centered on `address` into the Hex View
+/// buffer and switches focus to it. Falls back to reading forward from `address` (rather than
+/// centered) if the centered window crosses into unmapped memory, since a match sitting near the
+/// start of its region would otherwise always fail to open.
+fn focus_hex_view(state: &mut AppState, address: usize) -> Status {
+    let Some(session) = state.session.as_mut() else {
+        return not_attached();
+    };
+
+    let centered_base = address.saturating_sub(HEX_VIEW_BUFFER_LEN / 2);
+    let (base, bytes) = match session.read(centered_base, HEX_VIEW_BUFFER_LEN) {
+        Ok(bytes) => (centered_base, bytes),
+        Err(_) => match session.read(address, HEX_VIEW_BUFFER_LEN) {
+            Ok(bytes) => (address, bytes),
+            Err(err) => return Status::error(err.to_string()),
+        },
+    };
+
+    state.hex_cursor = address
+        .saturating_sub(base)
+        .min(bytes.len().saturating_sub(1));
+    state.hex_base_address = base;
+    state.hex_buffer = bytes;
+    state.hex_edit_input.clear();
+    state.focus = Focus::HexView;
+    Status::info(format!("hex view @ {address:#x}"))
+}
+
+/// Moves `state.hex_cursor` by `delta` bytes, clamped to `state.hex_buffer`'s bounds; a no-op if
+/// the buffer is empty.
+fn move_hex_cursor(state: &mut AppState, delta: isize) {
+    if state.hex_buffer.is_empty() {
+        return;
+    }
+    let max = state.hex_buffer.len() as isize - 1;
+    let next = (state.hex_cursor as isize + delta).clamp(0, max);
+    state.hex_cursor = next as usize;
+}
+
+/// Parses `state.hex_edit_input` as a hex byte and writes it to the address under the Hex View
+/// cursor, updating `state.hex_buffer` on success.
+fn commit_hex_edit(state: &mut AppState) -> Status {
+    let input = std::mem::take(&mut state.hex_edit_input);
+    if input.is_empty() {
+        return Status::error("no byte value entered");
+    }
+    let Ok(byte) = u8::from_str_radix(&input, 16) else {
+        return Status::error(format!("{input:?} is not a valid hex byte"));
+    };
+    let Some(address) = state.hex_cursor_address() else {
+        return if state.session.is_none() {
+            not_attached()
+        } else {
+            Status::error("hex view has no bytes loaded")
+        };
+    };
+    let Some(session) = state.session.as_mut() else {
+        return not_attached();
+    };
+
+    match session.write(address, &Value::U8(byte)) {
+        Ok(()) => {
+            state.hex_buffer[state.hex_cursor] = byte;
+            Status::info(format!("wrote {byte:#04x} @ {address:#x}"))
+        }
+        Err(err) => Status::error(err.to_string()),
     }
 }
 
