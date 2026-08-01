@@ -15,9 +15,13 @@ use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
 use gameconqueror::app::{AppState, Msg, StatusLevel, update};
+#[cfg(feature = "cheat-list")]
 use libscanmem::scanroutines::{MatchType, ScanDataType};
+#[cfg(feature = "cheat-list")]
 use libscanmem::session::{ScanCriterion, ScanExpr};
-use libscanmem::value::{UserValue, Value, parse_int};
+#[cfg(feature = "cheat-list")]
+use libscanmem::value::{UserValue, parse_int};
+use libscanmem::value::Value;
 
 /// `fake_target` is a `libscanmem` binary, not `gameconqueror`'s own, so Cargo doesn't expose a
 /// `CARGO_BIN_EXE_fake_target` env var for it here; it lands next to `gameconqueror`'s own
@@ -31,6 +35,7 @@ fn fake_target_path() -> PathBuf {
 
 #[test]
 #[ignore = "requires CAP_SYS_PTRACE; run manually with `--ignored`"]
+#[cfg(feature = "cheat-list")]
 fn attach_scan_narrow_write_and_verify_via_target_stdout() {
     let mut child = Command::new(fake_target_path())
         .stdout(Stdio::piped())

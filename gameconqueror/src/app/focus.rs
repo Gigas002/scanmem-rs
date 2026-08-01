@@ -9,16 +9,27 @@ pub enum Focus {
     ProcessPicker,
     ScanPanel,
     MatchView,
+    #[cfg(feature = "cheat-list")]
     CheatView,
     HexView,
 }
 
 /// Fixed cycling order for [`Focus::next`]/[`Focus::prev`].
+#[cfg(feature = "cheat-list")]
 const ORDER: [Focus; 5] = [
     Focus::ProcessPicker,
     Focus::ScanPanel,
     Focus::MatchView,
     Focus::CheatView,
+    Focus::HexView,
+];
+
+/// Fixed cycling order for [`Focus::next`]/[`Focus::prev`].
+#[cfg(not(feature = "cheat-list"))]
+const ORDER: [Focus; 4] = [
+    Focus::ProcessPicker,
+    Focus::ScanPanel,
+    Focus::MatchView,
     Focus::HexView,
 ];
 
@@ -44,6 +55,7 @@ impl std::fmt::Display for Focus {
             Focus::ProcessPicker => "Process Picker",
             Focus::ScanPanel => "Scan Panel",
             Focus::MatchView => "Match View",
+            #[cfg(feature = "cheat-list")]
             Focus::CheatView => "Cheat View",
             Focus::HexView => "Hex View",
         };

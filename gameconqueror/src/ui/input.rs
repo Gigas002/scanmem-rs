@@ -47,7 +47,9 @@ fn search_input_msg(state: &AppState, key: KeyEvent) -> Option<Msg> {
         Focus::ProcessPicker => process_search_msg(state, key),
         Focus::ScanPanel => scan_input_msg(state, key),
         Focus::MatchView => match_filter_msg(state, key),
-        Focus::CheatView | Focus::HexView => None,
+        #[cfg(feature = "cheat-list")]
+        Focus::CheatView => None,
+        Focus::HexView => None,
     }
 }
 

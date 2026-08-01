@@ -49,6 +49,8 @@ pub fn lookup_focus(focus: Focus, key: KeyEvent) -> Option<Msg> {
             (KeyCode::Char('/'), KeyModifiers::NONE) => Some(Msg::ToggleSearch),
             _ => None,
         },
-        Focus::CheatView | Focus::HexView => None,
+        #[cfg(feature = "cheat-list")]
+        Focus::CheatView => None,
+        Focus::HexView => None,
     }
 }

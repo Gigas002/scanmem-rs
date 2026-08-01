@@ -12,11 +12,15 @@ use std::process::ExitCode;
 use libscanmem::error::ScanmemError;
 use libscanmem::scanroutines::{MatchType, ScanDataType};
 use libscanmem::session::{ScanCriterion, ScanExpr, Session};
-use libscanmem::value::{self, UserValue, Value};
+#[cfg(feature = "cheat-list")]
+use libscanmem::value::Value;
+use libscanmem::value::{self, UserValue};
 
 pub use focus::Focus;
 pub use msg::Msg;
-pub use state::{AppState, CheatEntry, MatchSortColumn, ProcessEntry, Status, StatusLevel};
+#[cfg(feature = "cheat-list")]
+pub use state::CheatEntry;
+pub use state::{AppState, MatchSortColumn, ProcessEntry, Status, StatusLevel};
 
 use crate::settings::Settings;
 
@@ -40,13 +44,17 @@ pub fn update(state: &mut AppState, msg: Msg) {
         Msg::Write { address, value } => Some(with_session(state, |session| {
             session.write(address, &value).map(|()| "ok".to_owned())
         })),
+        #[cfg(feature = "cheat-list")]
         Msg::AddCheat {
             address,
             description,
             value,
         } => Some(add_cheat(state, address, description, value)),
+        #[cfg(feature = "cheat-list")]
         Msg::RemoveCheat(index) => Some(remove_cheat(state, index)),
+        #[cfg(feature = "cheat-list")]
         Msg::ToggleFreeze(index) => Some(toggle_freeze(state, index)),
+        #[cfg(feature = "cheat-list")]
         Msg::EditCheatValue { index, value } => Some(edit_cheat_value(state, index, value)),
         Msg::RefreshProcessList => Some(refresh_process_list(state)),
         Msg::FilterProcesses(query) => {
@@ -124,7 +132,9 @@ pub fn update(state: &mut AppState, msg: Msg) {
                         state.match_filter.clear();
                         state.match_selected = 0;
                     }
-                    Focus::CheatView | Focus::HexView => {}
+                    #[cfg(feature = "cheat-list")]
+                    Focus::CheatView => {}
+                    Focus::HexView => {}
                 }
             }
             None
@@ -170,6 +180,7 @@ fn reset_scan(state: &mut AppState) -> Status {
     }
 }
 
+#[cfg(feature = "cheat-list")]
 fn add_cheat(state: &mut AppState, address: usize, description: String, value: Value) -> Status {
     state.cheats.push(CheatEntry {
         address,
@@ -180,6 +191,7 @@ fn add_cheat(state: &mut AppState, address: usize, description: String, value: V
     Status::info("cheat added")
 }
 
+#[cfg(feature = "cheat-list")]
 fn remove_cheat(state: &mut AppState, index: usize) -> Status {
     if index >= state.cheats.len() {
         return cheat_index_out_of_range(index);
@@ -188,6 +200,7 @@ fn remove_cheat(state: &mut AppState, index: usize) -> Status {
     Status::info("cheat removed")
 }
 
+#[cfg(feature = "cheat-list")]
 fn toggle_freeze(state: &mut AppState, index: usize) -> Status {
     match state.cheats.get_mut(index) {
         Some(entry) => {
@@ -202,6 +215,7 @@ fn toggle_freeze(state: &mut AppState, index: usize) -> Status {
     }
 }
 
+#[cfg(feature = "cheat-list")]
 fn edit_cheat_value(state: &mut AppState, index: usize, value: Value) -> Status {
     let Some(entry) = state.cheats.get(index) else {
         return cheat_index_out_of_range(index);
@@ -400,6 +414,7 @@ fn not_attached() -> Status {
     Status::error(ScanmemError::NotAttached.to_string())
 }
 
+#[cfg(feature = "cheat-list")]
 fn cheat_index_out_of_range(index: usize) -> Status {
     Status::error(format!("cheat index {index} is out of range"))
 }

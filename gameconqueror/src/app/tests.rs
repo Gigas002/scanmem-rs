@@ -9,6 +9,7 @@ fn default_state_starts_on_process_picker_with_no_status() {
 
     assert_eq!(state.focus(), Focus::ProcessPicker);
     assert!(state.session().is_none());
+    #[cfg(feature = "cheat-list")]
     assert!(state.cheats().is_empty());
     assert!(!state.help_visible());
     assert!(!state.should_quit());
@@ -16,6 +17,7 @@ fn default_state_starts_on_process_picker_with_no_status() {
 }
 
 #[test]
+#[cfg(feature = "cheat-list")]
 fn focus_next_and_prev_cycle_through_every_panel() {
     let mut state = AppState::default();
 
@@ -25,6 +27,24 @@ fn focus_next_and_prev_cycle_through_every_panel() {
     assert_eq!(state.focus(), Focus::MatchView);
     update(&mut state, Msg::FocusNext);
     assert_eq!(state.focus(), Focus::CheatView);
+    update(&mut state, Msg::FocusNext);
+    assert_eq!(state.focus(), Focus::HexView);
+    update(&mut state, Msg::FocusNext);
+    assert_eq!(state.focus(), Focus::ProcessPicker);
+
+    update(&mut state, Msg::FocusPrev);
+    assert_eq!(state.focus(), Focus::HexView);
+}
+
+#[test]
+#[cfg(not(feature = "cheat-list"))]
+fn focus_next_and_prev_cycle_through_every_panel() {
+    let mut state = AppState::default();
+
+    update(&mut state, Msg::FocusNext);
+    assert_eq!(state.focus(), Focus::ScanPanel);
+    update(&mut state, Msg::FocusNext);
+    assert_eq!(state.focus(), Focus::MatchView);
     update(&mut state, Msg::FocusNext);
     assert_eq!(state.focus(), Focus::HexView);
     update(&mut state, Msg::FocusNext);
@@ -97,6 +117,7 @@ fn operations_that_require_a_session_report_not_attached() {
 }
 
 #[test]
+#[cfg(feature = "cheat-list")]
 fn add_cheat_appends_an_entry_without_requiring_a_session() {
     let mut state = AppState::default();
 
@@ -117,6 +138,7 @@ fn add_cheat_appends_an_entry_without_requiring_a_session() {
 }
 
 #[test]
+#[cfg(feature = "cheat-list")]
 fn remove_cheat_drops_the_entry_at_the_given_index() {
     let mut state = AppState::default();
     update(
@@ -134,6 +156,7 @@ fn remove_cheat_drops_the_entry_at_the_given_index() {
 }
 
 #[test]
+#[cfg(feature = "cheat-list")]
 fn remove_cheat_out_of_range_reports_an_error_and_keeps_the_list() {
     let mut state = AppState::default();
     update(
@@ -152,6 +175,7 @@ fn remove_cheat_out_of_range_reports_an_error_and_keeps_the_list() {
 }
 
 #[test]
+#[cfg(feature = "cheat-list")]
 fn toggle_freeze_flips_the_flag_each_call() {
     let mut state = AppState::default();
     update(
@@ -171,6 +195,7 @@ fn toggle_freeze_flips_the_flag_each_call() {
 }
 
 #[test]
+#[cfg(feature = "cheat-list")]
 fn toggle_freeze_out_of_range_reports_an_error() {
     let mut state = AppState::default();
 
@@ -180,6 +205,7 @@ fn toggle_freeze_out_of_range_reports_an_error() {
 }
 
 #[test]
+#[cfg(feature = "cheat-list")]
 fn edit_cheat_value_without_a_session_reports_not_attached_and_keeps_the_old_value() {
     let mut state = AppState::default();
     update(
@@ -206,6 +232,7 @@ fn edit_cheat_value_without_a_session_reports_not_attached_and_keeps_the_old_val
 }
 
 #[test]
+#[cfg(feature = "cheat-list")]
 fn edit_cheat_value_out_of_range_reports_an_error() {
     let mut state = AppState::default();
 
@@ -225,6 +252,7 @@ fn focus_display_names_match_the_status_bar_labels() {
     assert_eq!(Focus::ProcessPicker.to_string(), "Process Picker");
     assert_eq!(Focus::ScanPanel.to_string(), "Scan Panel");
     assert_eq!(Focus::MatchView.to_string(), "Match View");
+    #[cfg(feature = "cheat-list")]
     assert_eq!(Focus::CheatView.to_string(), "Cheat View");
     assert_eq!(Focus::HexView.to_string(), "Hex View");
 }

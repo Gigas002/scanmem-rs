@@ -4,6 +4,7 @@
 use libscanmem::error::ScanmemError;
 use libscanmem::scanroutines::{MatchType, ScanDataType};
 use libscanmem::session::{MatchView, Session};
+#[cfg(feature = "cheat-list")]
 use libscanmem::value::Value;
 use rustix::process::Pid;
 
@@ -41,6 +42,7 @@ impl Status {
 
 /// One recorded cheat-list entry: an address, a user description, the value to (re)write, and
 /// whether it is currently frozen (continuously rewritten).
+#[cfg(feature = "cheat-list")]
 #[derive(Debug, Clone, PartialEq)]
 pub struct CheatEntry {
     pub address: usize,
@@ -82,6 +84,7 @@ impl MatchSortColumn {
 #[derive(Debug)]
 pub struct AppState {
     pub(super) session: Option<Session>,
+    #[cfg(feature = "cheat-list")]
     pub(super) cheats: Vec<CheatEntry>,
     pub(super) processes: Vec<ProcessEntry>,
     pub(super) process_filter: String,
@@ -103,6 +106,7 @@ impl Default for AppState {
     fn default() -> Self {
         Self {
             session: None,
+            #[cfg(feature = "cheat-list")]
             cheats: Vec::new(),
             processes: Vec::new(),
             process_filter: String::new(),
@@ -127,6 +131,7 @@ impl AppState {
         self.session.as_ref()
     }
 
+    #[cfg(feature = "cheat-list")]
     pub fn cheats(&self) -> &[CheatEntry] {
         &self.cheats
     }

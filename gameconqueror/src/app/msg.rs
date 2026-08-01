@@ -22,17 +22,21 @@ pub enum Msg {
     /// Write a value into the target's address space.
     Write { address: usize, value: Value },
     /// Record a new cheat-list entry.
+    #[cfg(feature = "cheat-list")]
     AddCheat {
         address: usize,
         description: String,
         value: Value,
     },
     /// Remove a cheat-list entry by index.
+    #[cfg(feature = "cheat-list")]
     RemoveCheat(usize),
     /// Flip a cheat-list entry's freeze flag.
+    #[cfg(feature = "cheat-list")]
     ToggleFreeze(usize),
     /// Write a new value for an existing cheat-list entry, recording it as the entry's stored
     /// value on success.
+    #[cfg(feature = "cheat-list")]
     EditCheatValue { index: usize, value: Value },
     /// Rescan `/proc` for the current list of running processes.
     RefreshProcessList,

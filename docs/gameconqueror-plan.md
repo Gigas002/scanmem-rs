@@ -12,7 +12,7 @@ GTK/`iced` widget notes are superseded by §0/§4 below.
 
 Generic workspace/settings/testing/quality-gate rules: [ARCHITECTURE.md](./ARCHITECTURE.md). Sibling plans:
 [libscanmem-plan.md](./libscanmem-plan.md) (engine, must land first), [scanmem-plan.md](./scanmem-plan.md)
-(REPL CLI).
+(REPL CLI). End-user usage (build/run, feature flags, hotkeys, examples): [gameconqueror.md](./gameconqueror.md).
 
 **Priority order for every design call in this plan: code quality > performance > safety > 1:1 behavioral
 compatibility with the Python `GameConqueror`.**
@@ -110,7 +110,8 @@ gameconqueror/
       state.rs
       msg.rs
       focus.rs               # Focus enum + cycling order
-      cheatlist.rs            # cheat-list persistence (serde + TOML/JSON, not the legacy format)
+      cheatlist.rs            # cheat-list persistence (serde + TOML/JSON, not the legacy format);
+                             # `cheat-list` feature, off by default (§2.1)
       tests.rs
     ui/                      # ratatui — one file per panel/element
       mod.rs
@@ -120,7 +121,8 @@ gameconqueror/
       process_picker.rs        # Table over /proc, incremental search-filter
       scan_panel.rs            # scan type/match-type/value input line
       match_view.rs             # Table over scan results, sortable/filterable via AppState state
-      cheat_view.rs             # Table over cheat list, freeze toggle, inline value edit
+      cheat_view.rs             # Table over cheat list, freeze toggle, inline value edit; `cheat-list`
+                              # feature, off by default (§2.1)
       hex_view.rs               # 3-pane hex editor: offset/hex/ascii columns, cursor-driven
       help_overlay.rs           # `?`/F1 popup listing active bindings for the focused panel
       tests.rs
@@ -137,11 +139,18 @@ gameconqueror/
 | Feature | Default | Gates |
 | ------- | ------- | ----- |
 | `tui` | on | `ratatui`, `crossterm`, the entire `ui/` module — the shipped v0.1 experience |
+| `cheat-list` | **off** | `CheatEntry`/`AppState::cheats`, the cheat-related `Msg` variants (`AddCheat`, `RemoveCheat`, `ToggleFreeze`, `EditCheatValue`), `Focus::CheatView`, `app/cheatlist.rs` persistence, and `ui/cheat_view.rs` — the whole Phase 4 surface |
 
 `app/` and `tests/integration.rs` must build and pass under `--no-default-features` (no terminal UI at all)
 per [ARCHITECTURE.md §1.4](./ARCHITECTURE.md#14-cargo-features-for-slim-builds) — this is what guarantees
 the core is genuinely UI-independent, not just structured to look that way. A single `tui` feature (rather
 than the previous `gtk4`/`iced` pair) reflects that there is now only one front-end to gate.
+
+`cheat-list` is off by default, independently of `tui`: it is the newest, least-stable panel, and gating
+it as its own capability (per [ARCHITECTURE.md §1.4](./ARCHITECTURE.md#14-cargo-features-for-slim-builds))
+lets a slim build skip it entirely while still shipping the terminal UI for process/scan/match workflows.
+`Focus`'s cycling order (§4.1) adjusts at compile time based on whether this feature is enabled — the
+Cheat View step is simply absent from the cycle when it isn't.
 
 ---
 
@@ -314,12 +323,18 @@ using only the keyboard.
 
 ### Phase 4 — Cheat list
 
+Everything in this phase lives behind the `cheat-list` feature (§2.1), off by default — the core `Msg`
+variants and `AppState::cheats` already exist gated the same way (landed ahead of this phase alongside the
+rest of `app/`'s `Msg` enum); this phase is the remaining `ui/` and persistence work.
+
 - [ ] `ui/cheat_view.rs`: add-from-match-view, freeze toggle, inline value edit via prompt, description
   field.
-- [ ] `app/cheatlist.rs` persistence (TOML/JSON via `serde`); `Ctrl+S`/`Ctrl+L` wired to it.
+- [ ] `app/cheatlist.rs` persistence (TOML/JSON via `serde`, itself an optional dependency gated by
+  `cheat-list`); `Ctrl+S`/`Ctrl+L` wired to it.
 
 **Verify**: manual — freeze a value, confirm it's rewritten repeatedly; save/reload a cheat list file, all
-via hotkeys.
+via hotkeys; `cargo build -p gameconqueror` (default features) still compiles with no Cheat View reachable,
+and `cargo build -p gameconqueror --features cheat-list` builds it in.
 
 ### Phase 5 — HexView + help overlay
 
