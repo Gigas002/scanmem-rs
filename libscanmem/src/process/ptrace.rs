@@ -25,6 +25,14 @@ pub(super) fn detach(pid: Pid) -> Result<(), ScanmemError> {
     request(libc::PTRACE_DETACH, pid)
 }
 
+/// Resumes `pid` after a ptrace-observed stop, delivering no signal — used both right after
+/// [`attach`]'s initial stop (so being attached doesn't otherwise pause the target) and after a
+/// scan-time [`super::Process::stop`] (so the pause is scoped to the scan itself).
+#[cfg(target_os = "linux")]
+pub(super) fn cont(pid: Pid) -> Result<(), ScanmemError> {
+    request(libc::PTRACE_CONT, pid)
+}
+
 /// Issues a payload-less `ptrace(2)` request (`addr`/`data` both null) against `pid`.
 #[cfg(target_os = "linux")]
 fn request(request: libc::c_uint, pid: Pid) -> Result<(), ScanmemError> {
@@ -52,5 +60,10 @@ pub(super) fn attach(_pid: Pid) -> Result<(), ScanmemError> {
 
 #[cfg(not(target_os = "linux"))]
 pub(super) fn detach(_pid: Pid) -> Result<(), ScanmemError> {
+    Err(ScanmemError::Ptrace(libc::ENOSYS))
+}
+
+#[cfg(not(target_os = "linux"))]
+pub(super) fn cont(_pid: Pid) -> Result<(), ScanmemError> {
     Err(ScanmemError::Ptrace(libc::ENOSYS))
 }

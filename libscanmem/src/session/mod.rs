@@ -144,26 +144,42 @@ impl Session {
     }
 
     /// Runs a first scan (if no matches are currently recorded) or narrows the current matches
-    /// against `expr`.
+    /// against `expr`. The target is only paused (see [`Process::stop`]) for the duration of the
+    /// scan itself, not for the rest of the attached session.
     pub fn scan(&mut self, expr: &ScanExpr) -> Result<ScanStats> {
         validate(expr)?;
         self.stop_flag.reset();
-        if self.matches.match_count() == 0 {
+        self.process()?.stop()?;
+        let result = if self.matches.match_count() == 0 {
             self.first_scan(expr)
         } else {
             self.narrow_scan(expr)
-        }
+        };
+        self.resume_process();
+        result
     }
 
     /// Records every byte of every considered region as a candidate match, discarding any
-    /// current matches — the `MATCHANY` equivalent used to seed later narrowing scans.
+    /// current matches — the `MATCHANY` equivalent used to seed later narrowing scans. Pauses
+    /// the target for the duration of the snapshot only, same as [`Self::scan`].
     pub fn snapshot(&mut self) -> Result<ScanStats> {
         self.stop_flag.reset();
-        self.first_scan(&ScanExpr {
+        self.process()?.stop()?;
+        let result = self.first_scan(&ScanExpr {
             data_type: ScanDataType::AnyNumber,
             match_type: MatchType::Any,
             criterion: ScanCriterion::None,
-        })
+        });
+        self.resume_process();
+        result
+    }
+
+    /// Resumes the target after a scan-time [`Process::stop`], swallowing the error if it's no
+    /// longer attached (already reported by whatever `?` on [`Self::process`] the caller hit).
+    fn resume_process(&self) {
+        if let Ok(process) = self.process() {
+            let _ = process.resume();
+        }
     }
 
     /// Every currently recorded match, in ascending address order.
