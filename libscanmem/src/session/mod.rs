@@ -3,7 +3,7 @@
 use rustix::process::Pid;
 
 use crate::error::{Result, ScanmemError};
-use crate::interrupt::StopFlag;
+use crate::interrupt::{ScanProgress, StopFlag};
 use crate::maps::Region;
 use crate::process::Process;
 use crate::scanroutines::{self, Endianness, MatchType, ScanDataType};
@@ -123,6 +123,7 @@ pub struct Session {
     matches: SwathStore,
     options: SessionOptions,
     stop_flag: StopFlag,
+    progress: ScanProgress,
 }
 
 impl Session {
@@ -133,6 +134,7 @@ impl Session {
             matches: SwathStore::new(),
             options: SessionOptions::default(),
             stop_flag: StopFlag::new(),
+            progress: ScanProgress::new(),
         })
     }
 
@@ -143,43 +145,89 @@ impl Session {
         process.detach()
     }
 
+    /// A cloneable handle to this session's scan progress, readable from another thread while
+    /// `scan`/`snapshot` runs — obtain it *before* moving the `Session` to a background thread,
+    /// since the getters need `self`.
+    pub fn progress_handle(&self) -> ScanProgress {
+        self.progress.clone()
+    }
+
+    /// A cloneable handle to request the in-progress (or next) scan to stop early, usable from
+    /// another thread — same before-the-move caveat as [`Self::progress_handle`].
+    pub fn stop_handle(&self) -> StopFlag {
+        self.stop_flag.clone()
+    }
+
     /// Runs a first scan (if no matches are currently recorded) or narrows the current matches
-    /// against `expr`. The target is only paused (see [`Process::stop`]) for the duration of the
-    /// scan itself, not for the rest of the attached session.
+    /// against `expr`, synchronously: [`Self::prepare_scan`], [`Self::run_scan`], then
+    /// [`Self::resume_after_scan`] — the target is only paused for the duration of the scan
+    /// itself, not for the rest of the attached session. A convenience wrapper for callers on a
+    /// single thread (e.g. the `scanmem` CLI's REPL); a caller that wants the actual scan work
+    /// off its own thread (e.g. a UI that can't block on it) should call the three steps
+    /// separately instead — see their docs for why they're split out.
     pub fn scan(&mut self, expr: &ScanExpr) -> Result<ScanStats> {
         validate(expr)?;
-        self.stop_flag.reset();
-        self.process()?.stop()?;
-        let result = if self.matches.match_count() == 0 {
-            self.first_scan(expr)
-        } else {
-            self.narrow_scan(expr)
-        };
-        self.resume_process();
+        self.prepare_scan()?;
+        let result = self.run_scan(expr);
+        self.resume_after_scan();
         result
     }
 
     /// Records every byte of every considered region as a candidate match, discarding any
-    /// current matches — the `MATCHANY` equivalent used to seed later narrowing scans. Pauses
-    /// the target for the duration of the snapshot only, same as [`Self::scan`].
+    /// current matches — the `MATCHANY` equivalent used to seed later narrowing scans.
+    /// Synchronous convenience wrapper, same reasoning as [`Self::scan`].
     pub fn snapshot(&mut self) -> Result<ScanStats> {
-        self.stop_flag.reset();
-        self.process()?.stop()?;
-        let result = self.first_scan(&ScanExpr {
-            data_type: ScanDataType::AnyNumber,
-            match_type: MatchType::Any,
-            criterion: ScanCriterion::None,
-        });
-        self.resume_process();
+        self.prepare_scan()?;
+        let result = self.run_snapshot();
+        self.resume_after_scan();
         result
     }
 
-    /// Resumes the target after a scan-time [`Process::stop`], swallowing the error if it's no
-    /// longer attached (already reported by whatever `?` on [`Self::process`] the caller hit).
-    fn resume_process(&self) {
+    /// Stops the target (see [`Process::stop`]) ahead of a scan/snapshot and resets the abort
+    /// flag. Must be called on the same thread that called [`Self::attach`]: ptrace ties the
+    /// tracer relationship to the specific calling *thread*, not the whole process, so the
+    /// `waitpid` this performs to confirm the stop would otherwise never observe it (the tracee
+    /// stays stopped, but the wrong thread's call hangs forever waiting for a notification that
+    /// only the tracer thread receives). Pair with [`Self::run_scan`]/[`Self::run_snapshot`]
+    /// (safe to run on any thread) and [`Self::resume_after_scan`] (same thread-affinity
+    /// requirement as this method).
+    pub fn prepare_scan(&mut self) -> Result<()> {
+        self.stop_flag.reset();
+        self.process()?.stop()
+    }
+
+    /// Resumes the target after [`Self::prepare_scan`] (and a [`Self::run_scan`]/
+    /// [`Self::run_snapshot`] in between) — same same-thread-as-[`Self::attach`] requirement as
+    /// [`Self::prepare_scan`]. Errors (e.g. the target having exited mid-scan) are swallowed:
+    /// there is nothing a caller already past the scan can usefully do about a resume failure.
+    pub fn resume_after_scan(&self) {
         if let Ok(process) = self.process() {
             let _ = process.resume();
         }
+    }
+
+    /// Runs a first scan (if no matches are currently recorded) or narrows the current matches
+    /// against `expr`. The target must already be stopped via [`Self::prepare_scan`], but unlike
+    /// that method (and [`Self::resume_after_scan`]) this one never touches ptrace itself — it
+    /// only reads `/proc/<pid>/mem`, a regular file read against an fd opened back at
+    /// [`Self::attach`] — so, also unlike those two, it's safe to call from any thread.
+    pub fn run_scan(&mut self, expr: &ScanExpr) -> Result<ScanStats> {
+        validate(expr)?;
+        if self.matches.match_count() == 0 {
+            self.first_scan(expr)
+        } else {
+            self.narrow_scan(expr)
+        }
+    }
+
+    /// Records every byte of every considered region as a candidate match, discarding any
+    /// current matches. Same prepare-first/any-thread-safe contract as [`Self::run_scan`].
+    pub fn run_snapshot(&mut self) -> Result<ScanStats> {
+        self.first_scan(&ScanExpr {
+            data_type: ScanDataType::AnyNumber,
+            match_type: MatchType::Any,
+            criterion: ScanCriterion::None,
+        })
     }
 
     /// Every currently recorded match, in ascending address order.
@@ -248,22 +296,27 @@ impl Session {
     fn first_scan(&mut self, expr: &ScanExpr) -> Result<ScanStats> {
         let endianness = self.options.endianness;
         let region_filter = self.options.region_filter;
-        let regions = self.process()?.regions()?;
+        let regions: Vec<Region> = self
+            .process()?
+            .regions()?
+            .into_iter()
+            .filter(|region| region_filter.includes(region))
+            .collect();
+        self.progress.reset(regions.iter().map(Region::size).sum());
 
         let mut store = SwathStore::new();
-        for region in regions
-            .iter()
-            .filter(|region| region_filter.includes(region))
-        {
+        for region in &regions {
             if self.stop_flag.requested() {
                 break;
             }
             let Ok(bytes) = self.process()?.read(region.start, region.size()) else {
+                self.progress.add(region.size());
                 continue;
             };
             for (address, byte, flags) in scan_buffer(region.start, &bytes, expr, endianness) {
                 store.add(address, byte, flags);
             }
+            self.progress.add(region.size());
         }
 
         self.matches = store;
@@ -277,6 +330,13 @@ impl Session {
     fn narrow_scan(&mut self, expr: &ScanExpr) -> Result<ScanStats> {
         let endianness = self.options.endianness;
         let old_swaths = std::mem::take(&mut self.matches);
+        self.progress.reset(
+            old_swaths
+                .swaths()
+                .iter()
+                .map(|swath| swath.entries.len())
+                .sum(),
+        );
 
         let mut store = SwathStore::new();
         for swath in old_swaths.swaths() {
@@ -287,11 +347,13 @@ impl Session {
                 .process()?
                 .read(swath.first_byte_in_child, swath.entries.len())
             else {
+                self.progress.add(swath.entries.len());
                 continue;
             };
             for (address, byte, flags) in narrow_swath(swath, &fresh, expr, endianness) {
                 store.add(address, byte, flags);
             }
+            self.progress.add(swath.entries.len());
         }
 
         self.matches = store;

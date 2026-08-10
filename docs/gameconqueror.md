@@ -78,7 +78,10 @@ result of your last action, and a one-line hint of the global bindings.
 | `Shift+Tab` | Focus previous panel                                                                             |
 | `?` or `F1` | Toggle the help overlay for the current panel — lists every binding active for the focused panel, generated straight from `ui/keymap.rs` |
 | `Ctrl+Q`    | Quit                                                                                             |
+| `Ctrl+D`    | Detach from the current process, resuming its execution — no-op if nothing is attached           |
 | `Esc`       | Dismiss — closes the help overlay if open, otherwise cancels an active search/edit and clears it |
+
+The status bar also always shows whether a process is currently attached (and its pid/name), regardless of which panel is focused.
 
 ---
 
@@ -122,6 +125,13 @@ driven by keys instead of typed commands.
 Match types that take no value (`any`, `update`, `unchanged`, `changed`, `increased`, `decreased`)
 must be run with an empty input; `range` expects two whitespace-separated bounds (`low high`); every
 other match type requires exactly one value.
+
+Attaching does not pause the target — it keeps running normally so you can keep playing while you
+search. `s` and `n` run on a background thread and only pause the target for the scan/snapshot
+itself, so the rest of the TUI stays responsive while they work: the Scan Panel shows a live
+progress gauge for the duration (the status bar shows a percentage too, regardless of which panel
+is focused); press `Esc` to cancel early and keep whatever partial matches were found before the
+cancellation took effect.
 
 **Example** — find a 32-bit integer currently equal to `100`, then narrow to `95` after it changes
 in-game:

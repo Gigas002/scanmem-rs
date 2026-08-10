@@ -55,6 +55,24 @@ fn scan_panel_renders_without_panicking() {
 }
 
 #[test]
+fn scan_panel_progress_ratio_guards_against_a_zero_total() {
+    assert_eq!(scan_panel::progress_ratio(0, 0), 0.0);
+}
+
+#[test]
+fn scan_panel_progress_ratio_computes_the_fraction_done() {
+    assert_eq!(scan_panel::progress_ratio(25, 100), 0.25);
+    assert_eq!(scan_panel::progress_ratio(100, 100), 1.0);
+}
+
+#[test]
+fn scan_panel_progress_ratio_clamps_above_the_total() {
+    // Defensive: `Gauge::ratio` panics outside `[0.0, 1.0]`, so this must hold even if `done`
+    // ever ends up ahead of `total` (e.g. a future change to how they're accumulated).
+    assert_eq!(scan_panel::progress_ratio(150, 100), 1.0);
+}
+
+#[test]
 fn match_view_renders_without_panicking() {
     let backend = TestBackend::new(60, 10);
     let mut terminal = Terminal::new(backend).unwrap();
@@ -133,6 +151,10 @@ fn global_bindings_match_the_documented_table() {
         (
             KeyEvent::new(KeyCode::Char('q'), KeyModifiers::CONTROL),
             Msg::Quit,
+        ),
+        (
+            KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL),
+            Msg::Detach,
         ),
         (
             KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),

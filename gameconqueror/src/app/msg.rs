@@ -12,11 +12,19 @@ pub enum Msg {
     Attach(u32),
     /// Detach from the current target, if any, resuming its execution.
     Detach,
-    /// Run a first or narrowing scan; `Session::scan` picks based on whether matches are
-    /// already recorded.
+    /// Run a first or narrowing scan synchronously; `Session::scan` picks based on whether
+    /// matches are already recorded. Unlike `RunScan`, this blocks the caller until the scan
+    /// completes — used for direct/scripted invocation (and in tests) where that's fine; the
+    /// interactive TUI always goes through `RunScan` instead so a slow scan can't freeze it.
     Scan(ScanExpr),
-    /// Reseed the match set with every byte of every considered region.
+    /// Reseed the match set with every byte of every considered region, on a background thread —
+    /// same non-blocking reasoning as `RunScan`.
     Snapshot,
+    /// Checks whether a background scan/snapshot started by `RunScan`/`Snapshot` has finished;
+    /// if so, restores the session and reports its outcome. A no-op if none is running or it
+    /// hasn't finished yet — the event loop dispatches this every iteration, not just after
+    /// starting one.
+    PollScan,
     /// Discard the current match set without detaching.
     ResetScan,
     /// Write a value into the target's address space.
@@ -86,8 +94,10 @@ pub enum Msg {
     CycleScanMatchType,
     /// Set the Scan Panel's free-text value/range input, replacing any previous one.
     SetScanInput(String),
-    /// Build a `ScanExpr` from the Scan Panel's current data type/match type/input and run it;
-    /// `Session::scan` picks first vs. narrowing based on whether matches are already recorded.
+    /// Build a `ScanExpr` from the Scan Panel's current data type/match type/input and run it on
+    /// a background thread so the UI keeps rendering — a scan can easily take longer than a
+    /// frame; `Session::scan` picks first vs. narrowing based on whether matches are already
+    /// recorded. Poll for the result with `PollScan`.
     RunScan,
     /// Cycle the Match View's sort column.
     CycleMatchSort,

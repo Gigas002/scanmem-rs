@@ -43,9 +43,24 @@ pub fn render(frame: &mut Frame, state: &AppState) {
 }
 
 fn status_bar(state: &AppState) -> Paragraph<'_> {
+    let attach_label = match state.attached() {
+        Some(process) => format!("attached: {} ({})", process.pid, process.name),
+        None => "not attached".to_owned(),
+    };
+    // Read live off `scan_progress` (not the one-shot "scanning…" status message) so this
+    // updates every frame regardless of which panel is focused, not just the Scan Panel.
+    let scan_label = state.scan_progress().map(|(done, total)| {
+        let percent = if total == 0 {
+            0.0
+        } else {
+            (done as f64 / total as f64 * 100.0).min(100.0)
+        };
+        format!(" · scanning {percent:.0}% (Esc: cancel)")
+    });
     let mut text = format!(
-        "[{}] Tab: next panel · ?: help · Ctrl+Q: quit",
-        state.focus()
+        "[{}] {attach_label}{} · Tab: next panel · ?: help · Ctrl+Q: quit",
+        state.focus(),
+        scan_label.unwrap_or_default(),
     );
     let mut style = Style::default().fg(Color::Black).bg(Color::Gray);
 

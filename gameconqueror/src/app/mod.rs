@@ -12,15 +12,18 @@ mod state;
 #[cfg(feature = "cheat-list")]
 use std::path::PathBuf;
 use std::process::ExitCode;
+use std::sync::mpsc;
+use std::thread;
 
 use libscanmem::error::ScanmemError;
 use libscanmem::scanroutines::{MatchType, ScanDataType};
-use libscanmem::session::{ScanCriterion, ScanExpr, Session};
+use libscanmem::session::{ScanCriterion, ScanExpr, ScanStats, Session};
 use libscanmem::value::{self, UserValue, Value};
 
 pub use focus::Focus;
 pub use msg::Msg;
-pub use state::{AppState, MatchSortColumn, ProcessEntry, Status, StatusLevel};
+use state::ScanJob;
+pub use state::{AppState, AttachedProcess, MatchSortColumn, ProcessEntry, Status, StatusLevel};
 #[cfg(feature = "cheat-list")]
 pub use state::{CheatEntry, PathPromptKind};
 
@@ -37,11 +40,8 @@ pub fn update(state: &mut AppState, msg: Msg) {
                 .scan(&expr)
                 .map(|stats| format!("{} match(es)", stats.matches))
         })),
-        Msg::Snapshot => Some(with_session(state, |session| {
-            session
-                .snapshot()
-                .map(|stats| format!("{} match(es)", stats.matches))
-        })),
+        Msg::Snapshot => Some(spawn_scan(state, Session::run_snapshot)),
+        Msg::PollScan => poll_scan(state),
         Msg::ResetScan => Some(reset_scan(state)),
         Msg::Write { address, value } => Some(with_session(state, |session| {
             session.write(address, &value).map(|()| "ok".to_owned())
@@ -165,10 +165,17 @@ pub fn update(state: &mut AppState, msg: Msg) {
         Msg::Dismiss => {
             if state.help_visible {
                 state.help_visible = false;
+                None
             } else if close_path_prompt_if_open(state) {
-                // handled
+                None
+            } else if let Some(job) = &state.scan_job {
+                // The scan itself is on a background thread; this only asks it to stop early —
+                // `Msg::PollScan` picks up the (partial) result once it actually finishes.
+                job.stop_flag.request();
+                Some(Status::info("cancelling scan…"))
             } else if state.focus == Focus::HexView && !state.hex_edit_input.is_empty() {
                 state.hex_edit_input.clear();
+                None
             } else if state.search_active {
                 state.search_active = false;
                 match state.focus {
@@ -188,8 +195,10 @@ pub fn update(state: &mut AppState, msg: Msg) {
                     }
                     Focus::HexView => {}
                 }
+                None
+            } else {
+                None
             }
-            None
         }
         Msg::Quit => {
             state.quit = true;
@@ -228,7 +237,7 @@ fn reset_scan(state: &mut AppState) -> Status {
             session.delete_in_range(0..usize::MAX);
             Status::info("scan reset")
         }
-        None => not_attached(),
+        None => not_attached(state),
     }
 }
 
@@ -241,7 +250,7 @@ const HEX_VIEW_BUFFER_LEN: usize = 256;
 /// start of its region would otherwise always fail to open.
 fn focus_hex_view(state: &mut AppState, address: usize) -> Status {
     let Some(session) = state.session.as_mut() else {
-        return not_attached();
+        return not_attached(state);
     };
 
     let centered_base = address.saturating_sub(HEX_VIEW_BUFFER_LEN / 2);
@@ -286,13 +295,13 @@ fn commit_hex_edit(state: &mut AppState) -> Status {
     };
     let Some(address) = state.hex_cursor_address() else {
         return if state.session.is_none() {
-            not_attached()
+            not_attached(state)
         } else {
             Status::error("hex view has no bytes loaded")
         };
     };
     let Some(session) = state.session.as_mut() else {
-        return not_attached();
+        return not_attached(state);
     };
 
     match session.write(address, &Value::U8(byte)) {
@@ -346,7 +355,7 @@ fn edit_cheat_value(state: &mut AppState, index: usize, value: Value) -> Status 
     };
     let address = entry.address;
     let Some(session) = state.session.as_mut() else {
-        return not_attached();
+        return not_attached(state);
     };
     match session.write(address, &value) {
         Ok(()) => {
@@ -600,12 +609,77 @@ fn next_match_type(current: MatchType) -> MatchType {
 
 fn run_scan(state: &mut AppState) -> Status {
     match build_scan_expr(state) {
-        Ok(expr) => with_session(state, |session| {
-            session
-                .scan(&expr)
-                .map(|stats| format!("{} match(es)", stats.matches))
-        }),
+        Ok(expr) => spawn_scan(state, move |session| session.run_scan(&expr)),
         Err(err) => Status::error(err),
+    }
+}
+
+/// Starts `run` (a first/narrowing scan or a snapshot) on a background thread so the UI keeps
+/// rendering and responding to input while it works — either can easily take longer than a
+/// frame over a large address space. Moves `state.session` into the thread for the duration;
+/// `Msg::PollScan` moves it back once the thread sends a result. `state.attached` is untouched,
+/// so the UI keeps showing what it's attached to throughout.
+///
+/// Stops the target (`Session::prepare_scan`) here, on the caller's thread, *before* handing the
+/// session to the background thread, and only resumes it (`Session::resume_after_scan`) back on
+/// the caller's thread once `Msg::PollScan` sees the result — never inside the background thread
+/// itself. Ptrace ties the tracer relationship to the specific thread that called
+/// `Session::attach` (this one, since attach/detach are never threaded); stopping or resuming
+/// from any other thread would send the signal fine but then hang forever in `waitpid` waiting
+/// for a stop notification only the tracer thread ever receives. `run` itself doesn't touch
+/// ptrace — only `/proc/<pid>/mem`, safe from any thread — so it's the only part actually moved
+/// off this one.
+fn spawn_scan(
+    state: &mut AppState,
+    run: impl FnOnce(&mut Session) -> Result<ScanStats, ScanmemError> + Send + 'static,
+) -> Status {
+    let Some(mut session) = state.session.take() else {
+        return not_attached(state);
+    };
+
+    if let Err(err) = session.prepare_scan() {
+        state.session = Some(session);
+        return Status::error(err.to_string());
+    }
+
+    let progress = session.progress_handle();
+    let stop_flag = session.stop_handle();
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || {
+        let result = run(&mut session);
+        let _ = tx.send((session, result));
+    });
+
+    state.scan_job = Some(ScanJob {
+        rx,
+        progress,
+        stop_flag,
+    });
+    Status::info("scanning…")
+}
+
+/// Checks whether the in-progress background scan/snapshot has finished; if so, resumes the
+/// target (see [`spawn_scan`] for why that must happen here rather than on the background
+/// thread), restores `state.session`, and reports the scan's outcome. Dispatched every
+/// event-loop iteration via `Msg::PollScan`; a no-op if no scan is running or it hasn't sent a
+/// result yet.
+fn poll_scan(state: &mut AppState) -> Option<Status> {
+    let job = state.scan_job.as_ref()?;
+    match job.rx.try_recv() {
+        Ok((session, result)) => {
+            session.resume_after_scan();
+            state.scan_job = None;
+            state.session = Some(session);
+            Some(match result {
+                Ok(stats) => Status::info(format!("{} match(es)", stats.matches)),
+                Err(err) => Status::error(err.to_string()),
+            })
+        }
+        Err(mpsc::TryRecvError::Empty) => None,
+        Err(mpsc::TryRecvError::Disconnected) => {
+            state.scan_job = None;
+            Some(Status::error("scan thread terminated unexpectedly"))
+        }
     }
 }
 
@@ -691,11 +765,18 @@ fn with_session(
             Ok(text) => Status::info(text),
             Err(err) => Status::error(err.to_string()),
         },
-        None => not_attached(),
+        None => not_attached(state),
     }
 }
 
-fn not_attached() -> Status {
+/// The "no session available" status: distinguishes truly not being attached from `state.session`
+/// being temporarily unavailable because a background scan currently owns it (see
+/// `AppState::scan_job`) — both leave `state.session` empty, but the latter needs a different
+/// message since `state.attached` says otherwise.
+fn not_attached(state: &AppState) -> Status {
+    if state.scan_job.is_some() {
+        return Status::error("a scan is currently running");
+    }
     Status::error(ScanmemError::NotAttached.to_string())
 }
 

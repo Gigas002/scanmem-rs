@@ -5,13 +5,22 @@
 use libscanmem::scanroutines::{MatchType, ScanDataType};
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::widgets::{Block, Borders, Paragraph};
+use ratatui::style::{Color, Style};
+use ratatui::widgets::{Block, Borders, Gauge, Paragraph};
 
 use crate::app::AppState;
 
-/// Renders the Scan Panel into `area`: the current data type/match type, the value/range input
-/// (with a trailing cursor while being edited), and a one-line key hint.
+/// Renders the Scan Panel into `area`. While a scan/snapshot is running on a background thread
+/// (`AppState::is_scanning`), shows a progress gauge instead of the usual controls — the scan
+/// itself never blocks rendering, so this bar visibly advances instead of the whole TUI just
+/// freezing until it's done. Otherwise shows the current data type/match type, the value/range
+/// input (with a trailing cursor while being edited), and a one-line key hint.
 pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
+    if let Some((done, total)) = state.scan_progress() {
+        render_progress(frame, area, done, total);
+        return;
+    }
+
     let input = if state.search_active() {
         format!("{}_", state.scan_input())
     } else {
@@ -29,6 +38,33 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
         .title("Scan Panel — t: type, m: match, /: value, s: scan, n: snapshot, r: reset");
 
     frame.render_widget(Paragraph::new(text).block(block), area);
+}
+
+/// Renders a `done`/`total`-byte progress gauge.
+fn render_progress(frame: &mut Frame, area: Rect, done: usize, total: usize) {
+    let ratio = progress_ratio(done, total);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title("Scan Panel — scanning… (Esc: cancel)");
+    let gauge = Gauge::default()
+        .block(block)
+        .gauge_style(Style::default().fg(Color::Cyan))
+        .ratio(ratio)
+        .label(format!("{done}/{total} bytes ({:.0}%)", ratio * 100.0));
+
+    frame.render_widget(gauge, area);
+}
+
+/// `done / total`, clamped to `[0.0, 1.0]` and guarded against `total == 0` (briefly true right
+/// as a scan starts, before the background thread has read `/proc/<pid>/maps` and called
+/// [`libscanmem::interrupt::ScanProgress::reset`]) — `Gauge::ratio` panics outside `[0.0, 1.0]`.
+pub(super) fn progress_ratio(done: usize, total: usize) -> f64 {
+    if total == 0 {
+        0.0
+    } else {
+        (done as f64 / total as f64).min(1.0)
+    }
 }
 
 fn data_type_label(data_type: ScanDataType) -> &'static str {

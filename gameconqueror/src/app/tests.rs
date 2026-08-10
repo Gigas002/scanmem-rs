@@ -1,3 +1,4 @@
+use libscanmem::interrupt::{ScanProgress, StopFlag};
 use libscanmem::scanroutines::{MatchType, ScanDataType};
 use libscanmem::value::Value;
 
@@ -14,6 +15,25 @@ fn default_state_starts_on_process_picker_with_no_status() {
     assert!(!state.help_visible());
     assert!(!state.should_quit());
     assert!(state.status().is_none());
+    assert!(!state.is_scanning());
+    assert_eq!(state.scan_progress(), None);
+}
+
+#[test]
+fn is_scanning_and_scan_progress_reflect_an_in_progress_scan_job() {
+    let mut state = AppState::default();
+    let progress = ScanProgress::new();
+    progress.reset(100);
+    progress.add(40);
+    let (_tx, rx) = mpsc::channel();
+    state.scan_job = Some(ScanJob {
+        rx,
+        progress,
+        stop_flag: StopFlag::new(),
+    });
+
+    assert!(state.is_scanning());
+    assert_eq!(state.scan_progress(), Some((40, 100)));
 }
 
 #[test]
@@ -87,6 +107,7 @@ fn attach_with_zero_pid_reports_an_error_status_without_touching_focus() {
     update(&mut state, Msg::Attach(0));
 
     assert!(state.session().is_none());
+    assert!(state.attached().is_none());
     assert_eq!(state.status().unwrap().level, StatusLevel::Error);
 }
 

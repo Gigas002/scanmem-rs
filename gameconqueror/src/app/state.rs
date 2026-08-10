@@ -1,9 +1,12 @@
 //! [`AppState`] — attached session, recorded cheats, and focus/help/quit flags; the
 //! toolkit-independent state the `ui/` shell renders from each frame.
 
+use std::sync::mpsc;
+
 use libscanmem::error::ScanmemError;
+use libscanmem::interrupt::{ScanProgress, StopFlag};
 use libscanmem::scanroutines::{MatchType, ScanDataType};
-use libscanmem::session::{MatchView, Session};
+use libscanmem::session::{MatchView, ScanStats, Session};
 #[cfg(feature = "cheat-list")]
 use libscanmem::value::Value;
 use rustix::process::Pid;
@@ -61,12 +64,34 @@ pub enum PathPromptKind {
     Load,
 }
 
-/// One running process visible under `/proc`: a pid and its `comm` name (`"?"` if the name
+/// One running process visible under `/proc`: a pid and its display name (`"?"` if the name
 /// could not be read).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProcessEntry {
     pub pid: u32,
     pub name: String,
+}
+
+/// The currently attached target's pid and display name, tracked independent of whether
+/// [`AppState::session`] itself is populated — while a scan runs on a background thread the
+/// `Session` is temporarily taken out of `AppState`, but the UI must keep showing what it's
+/// attached to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AttachedProcess {
+    pub pid: u32,
+    pub name: String,
+}
+
+/// A scan or snapshot running on a background thread, started by `Msg::RunScan`/`Msg::Snapshot`
+/// so a slow scan can't freeze the UI. Owns the `Session` for the duration — it's moved out of
+/// `AppState` when the job starts and moved back once `Msg::PollScan` observes a result on `rx`
+/// — plus handles to watch its progress and request it stop early without needing the `Session`
+/// itself (which isn't available to the UI thread while the job is running).
+#[derive(Debug)]
+pub(super) struct ScanJob {
+    pub(super) rx: mpsc::Receiver<(Session, Result<ScanStats, ScanmemError>)>,
+    pub(super) progress: ScanProgress,
+    pub(super) stop_flag: StopFlag,
 }
 
 /// Which column the Match View is currently sorted by.
@@ -94,6 +119,8 @@ impl MatchSortColumn {
 #[derive(Debug)]
 pub struct AppState {
     pub(super) session: Option<Session>,
+    pub(super) attached: Option<AttachedProcess>,
+    pub(super) scan_job: Option<ScanJob>,
     #[cfg(feature = "cheat-list")]
     pub(super) cheats: Vec<CheatEntry>,
     #[cfg(feature = "cheat-list")]
@@ -132,6 +159,8 @@ impl Default for AppState {
     fn default() -> Self {
         Self {
             session: None,
+            attached: None,
+            scan_job: None,
             #[cfg(feature = "cheat-list")]
             cheats: Vec::new(),
             #[cfg(feature = "cheat-list")]
@@ -171,6 +200,25 @@ impl Default for AppState {
 impl AppState {
     pub fn session(&self) -> Option<&Session> {
         self.session.as_ref()
+    }
+
+    /// The currently attached target's pid/name, if any — stays populated for as long as a
+    /// session is attached, even while [`Self::session`] is temporarily unavailable because a
+    /// background scan currently owns it.
+    pub fn attached(&self) -> Option<&AttachedProcess> {
+        self.attached.as_ref()
+    }
+
+    /// `true` while a scan/snapshot started by `Msg::RunScan`/`Msg::Snapshot` is running on a
+    /// background thread. [`Self::session`] is unavailable for the duration.
+    pub fn is_scanning(&self) -> bool {
+        self.scan_job.is_some()
+    }
+
+    /// `(bytes scanned so far, total bytes considered)` for the in-progress scan, or `None` if
+    /// none is running.
+    pub fn scan_progress(&self) -> Option<(usize, usize)> {
+        self.scan_job.as_ref().map(|job| job.progress.get())
     }
 
     #[cfg(feature = "cheat-list")]
@@ -355,6 +403,13 @@ impl AppState {
         let session = Session::attach(pid)?;
         let region_count = session.region_count()?;
         self.session = Some(session);
+        let pid = pid.as_raw_pid() as u32;
+        let name = self
+            .processes
+            .iter()
+            .find(|process| process.pid == pid)
+            .map_or_else(|| "?".to_owned(), |process| process.name.clone());
+        self.attached = Some(AttachedProcess { pid, name });
         Ok(region_count)
     }
 
@@ -363,6 +418,7 @@ impl AppState {
         let session = self.session.as_mut().ok_or(ScanmemError::NotAttached)?;
         session.detach()?;
         self.session = None;
+        self.attached = None;
         Ok(())
     }
 }

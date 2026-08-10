@@ -37,16 +37,16 @@ pub fn list_processes() -> Vec<ProcessEntry> {
 /// becomes `Hollow Knight S`), making them unsearchable by their full title. Falls back to
 /// `comm` for kernel threads, whose `cmdline` is empty.
 fn process_name(proc_dir: &Path) -> String {
-    let argv0 = fs::read_to_string(proc_dir.join("cmdline")).ok().and_then(
-        |cmdline| -> Option<String> {
-            let arg = cmdline.split('\0').next().filter(|arg| !arg.is_empty())?;
-            Some(
-                Path::new(arg)
-                    .file_name()
-                    .map_or_else(|| arg.to_owned(), |name| name.to_string_lossy().into_owned()),
-            )
-        },
-    );
+    let argv0 =
+        fs::read_to_string(proc_dir.join("cmdline"))
+            .ok()
+            .and_then(|cmdline| -> Option<String> {
+                let arg = cmdline.split('\0').next().filter(|arg| !arg.is_empty())?;
+                Some(Path::new(arg).file_name().map_or_else(
+                    || arg.to_owned(),
+                    |name| name.to_string_lossy().into_owned(),
+                ))
+            });
     if let Some(name) = argv0 {
         return name;
     }

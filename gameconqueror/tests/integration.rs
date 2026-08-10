@@ -13,6 +13,7 @@
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
 
 use gameconqueror::app::{AppState, Focus, Msg, StatusLevel, update};
 #[cfg(feature = "cheat-list")]
@@ -33,11 +34,29 @@ fn fake_target_path() -> PathBuf {
         .join("fake_target")
 }
 
+/// `Msg::RunScan`/`Msg::Snapshot` run on a background thread (so the real TUI never blocks on
+/// one), so unlike every other `Msg` here their result isn't available the instant `update()`
+/// returns — dispatch `Msg::PollScan` (what the real event loop does every tick) until
+/// `AppState::is_scanning` clears, standing in for that loop.
+fn wait_for_scan(state: &mut AppState) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while state.is_scanning() {
+        assert!(Instant::now() < deadline, "scan did not finish in time");
+        update(state, Msg::PollScan);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
 #[test]
 #[ignore = "requires CAP_SYS_PTRACE; run manually with `--ignored`"]
 #[cfg(feature = "cheat-list")]
 fn attach_scan_narrow_write_and_verify_via_target_stdout() {
+    // The target now keeps running while attached (only an actual scan briefly pauses it), so it
+    // observes every write this test makes, not just the last one; tell it the final expected
+    // value up front so it ignores the intermediate `new_value` write below and waits for this.
+    let frozen_value = 0x2468_ace0_u32;
     let mut child = Command::new(fake_target_path())
+        .arg(format!("{frozen_value:x}"))
         .stdout(Stdio::piped())
         .spawn()
         .expect("failed to spawn fake_target");
@@ -59,6 +78,7 @@ fn attach_scan_narrow_write_and_verify_via_target_stdout() {
         "attach failed: {:?}",
         state.status()
     );
+    assert_eq!(state.attached().unwrap().pid, child.id());
 
     let initial = parse_int("0xdeadbeef").expect("valid literal");
     update(
@@ -110,7 +130,6 @@ fn attach_scan_narrow_write_and_verify_via_target_stdout() {
     );
     assert_eq!(state.cheats().len(), 1);
 
-    let frozen_value = 0x2468_ace0_u32;
     update(
         &mut state,
         Msg::EditCheatValue {
@@ -123,6 +142,7 @@ fn attach_scan_narrow_write_and_verify_via_target_stdout() {
 
     update(&mut state, Msg::Detach);
     assert!(state.session().is_none());
+    assert!(state.attached().is_none());
     assert_eq!(state.status().unwrap().level, StatusLevel::Info);
 
     let mut result_line = String::new();
@@ -143,7 +163,13 @@ fn attach_scan_narrow_write_and_verify_via_target_stdout() {
 #[ignore = "requires CAP_SYS_PTRACE; run manually with `--ignored`"]
 #[cfg(feature = "cheat-list")]
 fn freezing_a_cheat_rewrites_it_on_every_tick() {
+    // See the comment in `attach_scan_narrow_write_and_verify_via_target_stdout`: the target
+    // keeps running while attached, so it could in principle observe the intermediate
+    // `0x1111_1111` write below instead of the tick's rewrite; tell it the final expected value
+    // up front so it waits for that regardless of scheduling.
+    let frozen_value = 0x2468_ace0_u32;
     let mut child = Command::new(fake_target_path())
+        .arg(format!("{frozen_value:x}"))
         .stdout(Stdio::piped())
         .spawn()
         .expect("failed to spawn fake_target");
@@ -166,7 +192,6 @@ fn freezing_a_cheat_rewrites_it_on_every_tick() {
         state.status()
     );
 
-    let frozen_value = 0x2468_ace0_u32;
     update(
         &mut state,
         Msg::AddCheat {
@@ -208,7 +233,13 @@ fn freezing_a_cheat_rewrites_it_on_every_tick() {
 #[test]
 #[ignore = "requires CAP_SYS_PTRACE; run manually with `--ignored`"]
 fn scan_panel_run_scan_first_scan_and_narrow_via_typed_input() {
+    // The target now keeps running while attached (only an actual scan briefly pauses it), so
+    // its watch loop would otherwise notice this test's `Write` below and exit on its own before
+    // the second scan/detach — this test manages the child's lifetime itself (`child.kill()`
+    // below) and doesn't care what value fake_target ends up observing, so give it a sentinel
+    // it'll never actually see written to keep it running until then.
     let mut child = Command::new(fake_target_path())
+        .arg("ffffffff")
         .stdout(Stdio::piped())
         .spawn()
         .expect("failed to spawn fake_target");
@@ -237,6 +268,7 @@ fn scan_panel_run_scan_first_scan_and_narrow_via_typed_input() {
     // checks that the known address is present rather than the total count.
     update(&mut state, Msg::SetScanInput("0xdeadbeef".to_owned()));
     update(&mut state, Msg::RunScan);
+    wait_for_scan(&mut state);
     assert_eq!(state.status().unwrap().level, StatusLevel::Info);
     let matches = state.filtered_matches();
     assert!(matches.iter().any(|entry| entry.address == address));
@@ -253,12 +285,17 @@ fn scan_panel_run_scan_first_scan_and_narrow_via_typed_input() {
 
     update(&mut state, Msg::SetScanInput("0x12345678".to_owned()));
     update(&mut state, Msg::RunScan);
+    wait_for_scan(&mut state);
     assert_eq!(state.status().unwrap().level, StatusLevel::Info);
     let narrowed = state.filtered_matches();
     assert!(narrowed.iter().any(|entry| entry.address == address));
 
     update(&mut state, Msg::Detach);
-    assert!(state.session().is_none());
+    assert!(
+        state.session().is_none(),
+        "detach status: {:?}",
+        state.status()
+    );
 
     child.kill().expect("failed to kill fake_target");
     child.wait().expect("fake_target did not exit cleanly");

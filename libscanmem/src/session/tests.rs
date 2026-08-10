@@ -47,6 +47,7 @@ fn empty_session() -> Session {
         matches: SwathStore::new(),
         options: SessionOptions::default(),
         stop_flag: StopFlag::new(),
+        progress: ScanProgress::new(),
     }
 }
 

@@ -65,6 +65,12 @@ pub fn global_bindings() -> Vec<Binding> {
             label: "Esc",
             description: "dismiss a popup, or cancel an active search/edit",
         },
+        Binding {
+            key: (KeyCode::Char('d'), KeyModifiers::CONTROL),
+            msg: Msg::Detach,
+            label: "Ctrl+D",
+            description: "detach from the current process, resuming its execution",
+        },
     ];
 
     #[cfg(feature = "cheat-list")]
