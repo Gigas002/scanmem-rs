@@ -9,13 +9,15 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Cell, Row, Table};
 
 use crate::app::AppState;
+use crate::ui::panel_border_style;
 
 /// Bytes shown per row; also the byte distance `ui/keymap.rs` moves the cursor on `Up`/`Down`.
 pub const BYTES_PER_ROW: usize = 16;
 
 /// Renders the hex table into `area`: one row per [`BYTES_PER_ROW`] bytes of the loaded buffer,
-/// with the cursor byte highlighted in both the hex and ASCII columns.
-pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
+/// with the cursor byte highlighted in both the hex and ASCII columns. `focused` highlights the
+/// panel border when it's the grid's (or expanded view's) current focus.
+pub fn render(frame: &mut Frame, area: Rect, state: &AppState, focused: bool) {
     let buffer = state.hex_buffer();
     let base = state.hex_base_address();
     let cursor = state.hex_cursor();
@@ -72,7 +74,12 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
             Row::new(["Offset", "Hex", "ASCII"])
                 .style(Style::default().add_modifier(Modifier::BOLD)),
         )
-        .block(Block::default().borders(Borders::ALL).title(title(state)));
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(panel_border_style(focused))
+                .title(title(state)),
+        );
 
     frame.render_widget(table, area);
 }

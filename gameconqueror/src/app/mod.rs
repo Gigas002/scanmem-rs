@@ -20,7 +20,7 @@ use libscanmem::scanroutines::{MatchType, ScanDataType};
 use libscanmem::session::{ScanCriterion, ScanExpr, ScanStats, Session};
 use libscanmem::value::{self, UserValue, Value};
 
-pub use focus::Focus;
+pub use focus::{Direction, Focus};
 pub use msg::Msg;
 use state::ScanJob;
 pub use state::{AppState, AttachedProcess, MatchSortColumn, ProcessEntry, Status, StatusLevel};
@@ -156,6 +156,14 @@ pub fn update(state: &mut AppState, msg: Msg) {
         }
         Msg::FocusPrev => {
             state.focus = state.focus.prev();
+            None
+        }
+        Msg::FocusDirection(dir) => {
+            state.focus = state.focus.towards(dir);
+            None
+        }
+        Msg::ToggleExpand => {
+            state.expanded = !state.expanded;
             None
         }
         Msg::ShowHelp => {

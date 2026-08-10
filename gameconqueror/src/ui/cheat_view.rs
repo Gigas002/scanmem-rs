@@ -8,10 +8,12 @@ use ratatui::style::{Modifier, Style};
 use ratatui::widgets::{Block, Borders, Cell, Row, Table, TableState};
 
 use crate::app::AppState;
+use crate::ui::panel_border_style;
 
 /// Renders the cheat table into `area`: one row per recorded cheat, with the selected row
-/// highlighted and the title showing an in-progress value edit, if any.
-pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
+/// highlighted and the title showing an in-progress value edit, if any. `focused` highlights the
+/// panel border when it's the grid's (or expanded view's) current focus.
+pub fn render(frame: &mut Frame, area: Rect, state: &AppState, focused: bool) {
     let cheats = state.cheats();
 
     let rows = cheats.iter().map(|entry| {
@@ -35,7 +37,12 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
                 .style(Style::default().add_modifier(Modifier::BOLD)),
         )
         .row_highlight_style(Style::default().add_modifier(Modifier::REVERSED))
-        .block(Block::default().borders(Borders::ALL).title(title(state)));
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(panel_border_style(focused))
+                .title(title(state)),
+        );
 
     let mut table_state = TableState::default();
     if !cheats.is_empty() {

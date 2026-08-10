@@ -55,31 +55,64 @@ be tested/verified independently of `ratatui`, not as an end-user configuration.
 
 ## 2. The focus model
 
-There is no mouse. Exactly one panel has **focus** at any time, and every other key binding is
-interpreted relative to it. `Tab` / `Shift+Tab` cycle focus forward/backward through, in order:
+There is no mouse. Every panel is visible at once, arranged in a fixed grid (like `bottom`'s
+widget layout):
+
+```
+┌─────────────────┬───────────────────────────┐
+│ Process Picker   │ Scan Panel                │
+├─────────────────┴───────────────────────────┤
+│ Match View       │ Cheat View (cheat-list)   │
+├───────────────────────────────────────────────┤
+│ Hex View                                     │
+└───────────────────────────────────────────────┘
+```
+
+> Without the `cheat-list` feature (§1), Match View spans the full width of its row instead of
+> sharing it with Cheat View.
+
+Exactly one panel has **focus** at any time — its border is highlighted — and every panel-specific
+key binding (§4-§8) is interpreted relative to it. Typing (e.g. into a filter or the Scan Panel's
+value input) only affects the focused panel; every other panel keeps showing its own live state
+untouched, since they're all rendered every frame regardless of focus.
+
+| Key                 | Action                                                                 |
+| ------------------- | ----------------------------------------------------------------------- |
+| `Ctrl` + arrow key  | Move focus to whichever panel sits in that direction on the grid above  |
+| `Tab` / `Shift+Tab` | Cycle focus forward/backward through every panel, in a fixed order (see below) — a fallback for terminals that don't forward `Ctrl+Arrow` |
+| `Ctrl+E`            | Expand the focused panel to fill the whole screen, or collapse back to the grid |
+
+The `Tab`/`Shift+Tab` cycling order is:
 
 ```
 Process Picker → Scan Panel → Match View → [Cheat View, if built with `cheat-list`] → Hex View → (back to Process Picker)
 ```
 
-The status bar at the bottom of the screen always shows the currently focused panel's name, the
-result of your last action, and a one-line hint of the global bindings.
+While a panel is expanded (`Ctrl+E`), only it is drawn — the others are hidden until you collapse
+back, since there's nothing else on screen to move focus to.
 
-> Cheat View only appears in this cycle at all when `gameconqueror` is built with
-> `--features cheat-list` (§1); otherwise `Tab` skips straight from Match View to Hex View.
+The status bar at the bottom of the screen always shows the currently focused panel's name
+(and `(expanded)` when applicable), the result of your last action, and a one-line hint of the
+global bindings.
+
+> Cheat View only appears in the grid and the `Tab` cycle at all when `gameconqueror` is built with
+> `--features cheat-list` (§1); otherwise the grid drops it and `Tab` skips straight from Match
+> View to Hex View.
 
 ---
 
 ## 3. Global hotkeys (work in every panel)
 
-| Key         | Action                                                                                           |
-| ----------- | ------------------------------------------------------------------------------------------------ |
-| `Tab`       | Focus next panel                                                                                 |
-| `Shift+Tab` | Focus previous panel                                                                             |
-| `?` or `F1` | Toggle the help overlay for the current panel — lists every binding active for the focused panel, generated straight from `ui/keymap.rs` |
-| `Ctrl+Q`    | Quit                                                                                             |
-| `Ctrl+D`    | Detach from the current process, resuming its execution — no-op if nothing is attached           |
-| `Esc`       | Dismiss — closes the help overlay if open, otherwise cancels an active search/edit and clears it |
+| Key                | Action                                                                                           |
+| ------------------ | ------------------------------------------------------------------------------------------------ |
+| `Ctrl` + arrow key | Focus the panel spatially adjacent in that direction on the grid (§2)                            |
+| `Ctrl+E`           | Expand the focused panel fullscreen, or collapse back to the grid                                |
+| `Tab`              | Focus next panel (fixed cycling order, §2)                                                       |
+| `Shift+Tab`        | Focus previous panel                                                                             |
+| `?` or `F1`        | Toggle the help overlay for the current panel — lists every binding active for the focused panel, generated straight from `ui/keymap.rs` |
+| `Ctrl+Q`           | Quit                                                                                             |
+| `Ctrl+D`           | Detach from the current process, resuming its execution — no-op if nothing is attached           |
+| `Esc`              | Dismiss — closes the help overlay if open, otherwise cancels an active search/edit and clears it |
 
 The status bar also always shows whether a process is currently attached (and its pid/name), regardless of which panel is focused.
 
@@ -217,9 +250,9 @@ schema rationale.
 
 ## 8. Hex View
 
-A 3-pane offset/hex/ASCII view over a window of bytes around an address, opened by pressing `h` on
-a selected row in the Match View (§6) or Cheat View (§7) — not directly reachable via `Tab` with
-useful data until then, since it has nothing to show until a row is picked.
+A 3-pane offset/hex/ASCII view over a window of bytes around an address. Its grid tile is always
+visible (§2) but empty until you populate it by pressing `h` on a selected row in the Match View
+(§6) or Cheat View (§7).
 
 | Key                 | Action                                                              |
 | ------------------- | -------------------------------------------------------------------- |

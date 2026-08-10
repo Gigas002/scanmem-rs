@@ -75,6 +75,58 @@ fn focus_next_and_prev_cycle_through_every_panel() {
 }
 
 #[test]
+#[cfg(feature = "cheat-list")]
+fn focus_direction_navigates_the_grid_spatially() {
+    let mut state = AppState::default();
+    assert_eq!(state.focus(), Focus::ProcessPicker);
+
+    update(&mut state, Msg::FocusDirection(Direction::Right));
+    assert_eq!(state.focus(), Focus::ScanPanel);
+    update(&mut state, Msg::FocusDirection(Direction::Down));
+    assert_eq!(state.focus(), Focus::CheatView);
+    update(&mut state, Msg::FocusDirection(Direction::Down));
+    assert_eq!(state.focus(), Focus::HexView);
+    update(&mut state, Msg::FocusDirection(Direction::Up));
+    assert_eq!(state.focus(), Focus::MatchView);
+    update(&mut state, Msg::FocusDirection(Direction::Left));
+    // No panel to the left of Match View — a no-op.
+    assert_eq!(state.focus(), Focus::MatchView);
+    update(&mut state, Msg::FocusDirection(Direction::Up));
+    assert_eq!(state.focus(), Focus::ProcessPicker);
+}
+
+#[test]
+#[cfg(not(feature = "cheat-list"))]
+fn focus_direction_navigates_the_grid_spatially() {
+    let mut state = AppState::default();
+    assert_eq!(state.focus(), Focus::ProcessPicker);
+
+    update(&mut state, Msg::FocusDirection(Direction::Right));
+    assert_eq!(state.focus(), Focus::ScanPanel);
+    update(&mut state, Msg::FocusDirection(Direction::Down));
+    assert_eq!(state.focus(), Focus::MatchView);
+    update(&mut state, Msg::FocusDirection(Direction::Down));
+    assert_eq!(state.focus(), Focus::HexView);
+    update(&mut state, Msg::FocusDirection(Direction::Right));
+    // No panel to the right of Hex View — a no-op.
+    assert_eq!(state.focus(), Focus::HexView);
+    update(&mut state, Msg::FocusDirection(Direction::Up));
+    assert_eq!(state.focus(), Focus::MatchView);
+}
+
+#[test]
+fn toggle_expand_flips_the_expanded_flag() {
+    let mut state = AppState::default();
+    assert!(!state.expanded());
+
+    update(&mut state, Msg::ToggleExpand);
+    assert!(state.expanded());
+
+    update(&mut state, Msg::ToggleExpand);
+    assert!(!state.expanded());
+}
+
+#[test]
 fn show_help_toggles_and_dismiss_always_closes() {
     let mut state = AppState::default();
 

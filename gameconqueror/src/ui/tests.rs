@@ -35,7 +35,7 @@ fn process_picker_renders_without_panicking() {
     terminal
         .draw(|frame| {
             let area = frame.area();
-            process_picker::render(frame, area, &state);
+            process_picker::render(frame, area, &state, true);
         })
         .unwrap();
 }
@@ -49,7 +49,7 @@ fn scan_panel_renders_without_panicking() {
     terminal
         .draw(|frame| {
             let area = frame.area();
-            scan_panel::render(frame, area, &state);
+            scan_panel::render(frame, area, &state, true);
         })
         .unwrap();
 }
@@ -81,7 +81,7 @@ fn match_view_renders_without_panicking() {
     terminal
         .draw(|frame| {
             let area = frame.area();
-            match_view::render(frame, area, &state);
+            match_view::render(frame, area, &state, true);
         })
         .unwrap();
 }
@@ -95,7 +95,7 @@ fn hex_view_renders_without_panicking_on_an_empty_buffer() {
     terminal
         .draw(|frame| {
             let area = frame.area();
-            hex_view::render(frame, area, &state);
+            hex_view::render(frame, area, &state, true);
         })
         .unwrap();
 }
@@ -165,6 +165,60 @@ fn global_bindings_match_the_documented_table() {
     for (key, expected) in cases {
         assert_eq!(keymap::lookup_global(key), Some(expected));
     }
+}
+
+#[test]
+fn global_bindings_include_directional_focus_and_expand() {
+    use crate::app::Direction;
+
+    let cases = [
+        (
+            KeyEvent::new(KeyCode::Left, KeyModifiers::CONTROL),
+            Msg::FocusDirection(Direction::Left),
+        ),
+        (
+            KeyEvent::new(KeyCode::Right, KeyModifiers::CONTROL),
+            Msg::FocusDirection(Direction::Right),
+        ),
+        (
+            KeyEvent::new(KeyCode::Up, KeyModifiers::CONTROL),
+            Msg::FocusDirection(Direction::Up),
+        ),
+        (
+            KeyEvent::new(KeyCode::Down, KeyModifiers::CONTROL),
+            Msg::FocusDirection(Direction::Down),
+        ),
+        (
+            KeyEvent::new(KeyCode::Char('e'), KeyModifiers::CONTROL),
+            Msg::ToggleExpand,
+        ),
+    ];
+
+    for (key, expected) in cases {
+        assert_eq!(keymap::lookup_global(key), Some(expected));
+    }
+}
+
+#[test]
+fn ctrl_up_while_searching_falls_through_to_focus_direction_instead_of_selecting() {
+    let mut state = AppState::default();
+    update(&mut state, Msg::ToggleSearch);
+    assert_eq!(state.focus(), Focus::ProcessPicker);
+
+    input::handle_key(
+        &mut state,
+        KeyEvent::new(KeyCode::Up, KeyModifiers::CONTROL),
+    );
+
+    // No panel above the Process Picker, so FocusDirection(Up) is a no-op — but crucially it must
+    // *not* have been swallowed as Msg::SelectPrev by the search-mode input handler.
+    assert_eq!(state.focus(), Focus::ProcessPicker);
+
+    input::handle_key(
+        &mut state,
+        KeyEvent::new(KeyCode::Right, KeyModifiers::CONTROL),
+    );
+    assert_eq!(state.focus(), Focus::ScanPanel);
 }
 
 #[test]
@@ -543,7 +597,7 @@ fn cheat_view_renders_without_panicking() {
     terminal
         .draw(|frame| {
             let area = frame.area();
-            cheat_view::render(frame, area, &state);
+            cheat_view::render(frame, area, &state, true);
         })
         .unwrap();
 }

@@ -6,7 +6,7 @@
 
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use crate::app::{Focus, Msg};
+use crate::app::{Direction, Focus, Msg};
 use crate::ui::hex_view::BYTES_PER_ROW;
 
 /// One documented, statically dispatchable key binding.
@@ -70,6 +70,36 @@ pub fn global_bindings() -> Vec<Binding> {
             msg: Msg::Detach,
             label: "Ctrl+D",
             description: "detach from the current process, resuming its execution",
+        },
+        Binding {
+            key: (KeyCode::Left, KeyModifiers::CONTROL),
+            msg: Msg::FocusDirection(Direction::Left),
+            label: "Ctrl+Left",
+            description: "focus the panel to the left",
+        },
+        Binding {
+            key: (KeyCode::Right, KeyModifiers::CONTROL),
+            msg: Msg::FocusDirection(Direction::Right),
+            label: "Ctrl+Right",
+            description: "focus the panel to the right",
+        },
+        Binding {
+            key: (KeyCode::Up, KeyModifiers::CONTROL),
+            msg: Msg::FocusDirection(Direction::Up),
+            label: "Ctrl+Up",
+            description: "focus the panel above",
+        },
+        Binding {
+            key: (KeyCode::Down, KeyModifiers::CONTROL),
+            msg: Msg::FocusDirection(Direction::Down),
+            label: "Ctrl+Down",
+            description: "focus the panel below",
+        },
+        Binding {
+            key: (KeyCode::Char('e'), KeyModifiers::CONTROL),
+            msg: Msg::ToggleExpand,
+            label: "Ctrl+E",
+            description: "expand the focused panel fullscreen, or collapse back to the grid",
         },
     ];
 

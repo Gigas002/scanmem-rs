@@ -23,9 +23,23 @@ use ratatui::crossterm::execute;
 use ratatui::crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
+use ratatui::style::{Color, Modifier, Style};
 
 use crate::app::{AppState, Msg};
 use crate::settings::Settings;
+
+/// The border style every panel renderer applies to its `Block`: highlighted when `focused` (the
+/// grid's currently focused tile, or the sole panel shown while expanded), plain otherwise — the
+/// only visual cue distinguishing panels in the always-visible grid `ui/layout.rs` renders.
+pub(crate) fn panel_border_style(focused: bool) -> Style {
+    if focused {
+        Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default()
+    }
+}
 
 /// Enters raw mode + the alternate screen on construction, restores the terminal on drop —
 /// covers both clean exits and unwinding panics without leaving the terminal broken.

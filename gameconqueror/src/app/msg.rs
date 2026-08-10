@@ -5,6 +5,8 @@
 use libscanmem::session::ScanExpr;
 use libscanmem::value::Value;
 
+use crate::app::Direction;
+
 /// One user-triggered action.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Msg {
@@ -115,6 +117,14 @@ pub enum Msg {
     FocusNext,
     /// Cycle the focused panel backward.
     FocusPrev,
+    /// Move focus to whichever panel sits in `Direction` on the grid `ui/layout.rs` renders
+    /// (`Ctrl+<Arrow>`), a no-op if there is none. Unlike `FocusNext`/`FocusPrev`, this only
+    /// applies while the grid is showing every panel — it's meaningless while one is expanded,
+    /// since none of the others are on screen to move to.
+    FocusDirection(Direction),
+    /// Toggle between the multi-panel grid and showing only the focused panel fullscreen —
+    /// `Ctrl+E`, mirroring `bottom`'s widget-expand binding.
+    ToggleExpand,
     /// Toggle the help overlay for the current focus.
     ShowHelp,
     /// Close a popup/overlay/prompt without acting.

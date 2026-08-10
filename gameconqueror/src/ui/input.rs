@@ -206,8 +206,10 @@ fn process_search_msg(state: &AppState, key: KeyEvent) -> Option<Msg> {
             Some(Msg::FilterProcesses(query))
         }
         KeyCode::Enter => Some(Msg::ToggleSearch),
-        KeyCode::Up => Some(Msg::SelectPrev),
-        KeyCode::Down => Some(Msg::SelectNext),
+        // Plain (not Ctrl+) arrows only — Ctrl+Up/Down must fall through to the global keymap's
+        // FocusDirection bindings instead of being swallowed here as a selection move.
+        KeyCode::Up if key.modifiers == KeyModifiers::NONE => Some(Msg::SelectPrev),
+        KeyCode::Down if key.modifiers == KeyModifiers::NONE => Some(Msg::SelectNext),
         _ => None,
     }
 }
@@ -244,8 +246,9 @@ fn match_filter_msg(state: &AppState, key: KeyEvent) -> Option<Msg> {
             Some(Msg::FilterMatches(query))
         }
         KeyCode::Enter => Some(Msg::ToggleSearch),
-        KeyCode::Up => Some(Msg::SelectPrev),
-        KeyCode::Down => Some(Msg::SelectNext),
+        // See the comment in `process_search_msg` — same Ctrl+Up/Down carve-out.
+        KeyCode::Up if key.modifiers == KeyModifiers::NONE => Some(Msg::SelectPrev),
+        KeyCode::Down if key.modifiers == KeyModifiers::NONE => Some(Msg::SelectNext),
         _ => None,
     }
 }

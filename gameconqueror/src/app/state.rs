@@ -150,6 +150,7 @@ pub struct AppState {
     pub(super) hex_cursor: usize,
     pub(super) hex_edit_input: String,
     pub(super) focus: Focus,
+    pub(super) expanded: bool,
     pub(super) help_visible: bool,
     pub(super) quit: bool,
     pub(super) status: Option<Status>,
@@ -190,6 +191,7 @@ impl Default for AppState {
             hex_cursor: 0,
             hex_edit_input: String::new(),
             focus: Focus::default(),
+            expanded: false,
             help_visible: false,
             quit: false,
             status: None,
@@ -259,6 +261,12 @@ impl AppState {
 
     pub fn focus(&self) -> Focus {
         self.focus
+    }
+
+    /// `true` while `ui/layout.rs` shows only the focused panel fullscreen instead of the
+    /// multi-panel grid — toggled by `Msg::ToggleExpand` (`Ctrl+E`).
+    pub fn expanded(&self) -> bool {
+        self.expanded
     }
 
     pub fn help_visible(&self) -> bool {

@@ -1,9 +1,7 @@
 //! Top-level frame layout: renders the focused panel's body plus a one-line status bar.
 
 use ratatui::Frame;
-#[cfg(feature = "cheat-list")]
-use ratatui::layout::Rect;
-use ratatui::layout::{Constraint, Layout};
+use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Style};
 use ratatui::widgets::Paragraph;
 #[cfg(feature = "cheat-list")]
@@ -16,18 +14,16 @@ use crate::app::{AppState, Focus, StatusLevel};
 use crate::ui::cheat_view;
 use crate::ui::{help_overlay, hex_view, match_view, process_picker, scan_panel};
 
-/// Renders the current frame: the focused panel's body, then a status bar showing the current
-/// focus, the last status message (if any), and a one-line hint of the global bindings.
+/// Renders the current frame: either the multi-panel grid or (while `AppState::expanded`) just
+/// the focused panel fullscreen, then a status bar showing the current focus, the last status
+/// message (if any), and a one-line hint of the global bindings.
 pub fn render(frame: &mut Frame, state: &AppState) {
     let chunks = Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).split(frame.area());
 
-    match state.focus() {
-        Focus::ProcessPicker => process_picker::render(frame, chunks[0], state),
-        Focus::ScanPanel => scan_panel::render(frame, chunks[0], state),
-        Focus::MatchView => match_view::render(frame, chunks[0], state),
-        #[cfg(feature = "cheat-list")]
-        Focus::CheatView => cheat_view::render(frame, chunks[0], state),
-        Focus::HexView => hex_view::render(frame, chunks[0], state),
+    if state.expanded() {
+        render_expanded(frame, chunks[0], state);
+    } else {
+        render_grid(frame, chunks[0], state);
     }
 
     frame.render_widget(status_bar(state), chunks[1]);
@@ -40,6 +36,50 @@ pub fn render(frame: &mut Frame, state: &AppState) {
     if state.help_visible() {
         help_overlay::render(frame, state.focus());
     }
+}
+
+/// Renders only the focused panel into `area`, filling it entirely — `Msg::ToggleExpand`
+/// (`Ctrl+E`)'s fullscreen mode.
+fn render_expanded(frame: &mut Frame, area: Rect, state: &AppState) {
+    match state.focus() {
+        Focus::ProcessPicker => process_picker::render(frame, area, state, true),
+        Focus::ScanPanel => scan_panel::render(frame, area, state, true),
+        Focus::MatchView => match_view::render(frame, area, state, true),
+        #[cfg(feature = "cheat-list")]
+        Focus::CheatView => cheat_view::render(frame, area, state, true),
+        Focus::HexView => hex_view::render(frame, area, state, true),
+    }
+}
+
+/// Renders every panel at once into `area`, arranged in a fixed 3-row grid — top row: Process
+/// Picker | Scan Panel; middle row: Match View | Cheat View (or just Match View without the
+/// `cheat-list` feature); bottom row: Hex View, spanning the full width. `Focus::towards` (in
+/// `app/focus.rs`) encodes `Ctrl+<Arrow>` navigation over exactly this arrangement, so changing it
+/// here means updating that too.
+fn render_grid(frame: &mut Frame, area: Rect, state: &AppState) {
+    let rows = Layout::vertical([
+        Constraint::Percentage(30),
+        Constraint::Percentage(40),
+        Constraint::Min(0),
+    ])
+    .split(area);
+
+    let top =
+        Layout::horizontal([Constraint::Percentage(35), Constraint::Percentage(65)]).split(rows[0]);
+    process_picker::render(frame, top[0], state, state.focus() == Focus::ProcessPicker);
+    scan_panel::render(frame, top[1], state, state.focus() == Focus::ScanPanel);
+
+    #[cfg(feature = "cheat-list")]
+    {
+        let middle = Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)])
+            .split(rows[1]);
+        match_view::render(frame, middle[0], state, state.focus() == Focus::MatchView);
+        cheat_view::render(frame, middle[1], state, state.focus() == Focus::CheatView);
+    }
+    #[cfg(not(feature = "cheat-list"))]
+    match_view::render(frame, rows[1], state, state.focus() == Focus::MatchView);
+
+    hex_view::render(frame, rows[2], state, state.focus() == Focus::HexView);
 }
 
 fn status_bar(state: &AppState) -> Paragraph<'_> {
@@ -57,8 +97,10 @@ fn status_bar(state: &AppState) -> Paragraph<'_> {
         };
         format!(" · scanning {percent:.0}% (Esc: cancel)")
     });
+    let expanded_label = if state.expanded() { " (expanded)" } else { "" };
     let mut text = format!(
-        "[{}] {attach_label}{} · Tab: next panel · ?: help · Ctrl+Q: quit",
+        "[{}{expanded_label}] {attach_label}{} · Ctrl+arrows: switch panel · Ctrl+E: expand \
+         · Tab: cycle · ?: help · Ctrl+Q: quit",
         state.focus(),
         scan_label.unwrap_or_default(),
     );

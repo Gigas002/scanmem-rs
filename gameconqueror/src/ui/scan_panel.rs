@@ -9,15 +9,17 @@ use ratatui::style::{Color, Style};
 use ratatui::widgets::{Block, Borders, Gauge, Paragraph};
 
 use crate::app::AppState;
+use crate::ui::panel_border_style;
 
 /// Renders the Scan Panel into `area`. While a scan/snapshot is running on a background thread
 /// (`AppState::is_scanning`), shows a progress gauge instead of the usual controls — the scan
 /// itself never blocks rendering, so this bar visibly advances instead of the whole TUI just
 /// freezing until it's done. Otherwise shows the current data type/match type, the value/range
-/// input (with a trailing cursor while being edited), and a one-line key hint.
-pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
+/// input (with a trailing cursor while being edited), and a one-line key hint. `focused`
+/// highlights the panel border when it's the grid's (or expanded view's) current focus.
+pub fn render(frame: &mut Frame, area: Rect, state: &AppState, focused: bool) {
     if let Some((done, total)) = state.scan_progress() {
-        render_progress(frame, area, done, total);
+        render_progress(frame, area, done, total, focused);
         return;
     }
 
@@ -35,17 +37,19 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
 
     let block = Block::default()
         .borders(Borders::ALL)
+        .border_style(panel_border_style(focused))
         .title("Scan Panel — t: type, m: match, /: value, s: scan, n: snapshot, r: reset");
 
     frame.render_widget(Paragraph::new(text).block(block), area);
 }
 
 /// Renders a `done`/`total`-byte progress gauge.
-fn render_progress(frame: &mut Frame, area: Rect, done: usize, total: usize) {
+fn render_progress(frame: &mut Frame, area: Rect, done: usize, total: usize, focused: bool) {
     let ratio = progress_ratio(done, total);
 
     let block = Block::default()
         .borders(Borders::ALL)
+        .border_style(panel_border_style(focused))
         .title("Scan Panel — scanning… (Esc: cancel)");
     let gauge = Gauge::default()
         .block(block)
