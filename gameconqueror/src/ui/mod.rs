@@ -13,7 +13,7 @@ mod match_view;
 mod process_picker;
 mod scan_panel;
 
-use std::io;
+use std::io::{self, IsTerminal};
 use std::process::ExitCode;
 use std::time::Duration;
 
@@ -29,16 +29,28 @@ use ratatui::style::{Color, Modifier, Style};
 use crate::app::{AppState, Msg};
 use crate::settings::Settings;
 
+/// Whether `ui/` should use ANSI colors, honoring `NO_COLOR` — the same convention (and the same
+/// `NO_COLOR`-then-`IsTerminal` check) as `scanmem`'s CLI `commands::formatter::color_enabled`,
+/// reused here rather than inventing a second color-detection policy. `stdout` is the relevant
+/// stream since that's what `CrosstermBackend` renders to (see [`run_event_loop`]).
+pub(crate) fn color_enabled() -> bool {
+    std::env::var_os("NO_COLOR").is_none() && io::stdout().is_terminal()
+}
+
 /// The border style every panel renderer applies to its `Block`: highlighted when `focused` (the
 /// grid's currently focused tile, or the sole panel shown while expanded), plain otherwise — the
-/// only visual cue distinguishing panels in the always-visible grid `ui/layout.rs` renders.
+/// only visual cue distinguishing panels in the always-visible grid `ui/layout.rs` renders. Falls
+/// back to a modifier-only highlight (no `Color`) when [`color_enabled`] is `false`.
 pub(crate) fn panel_border_style(focused: bool) -> Style {
-    if focused {
+    if !focused {
+        return Style::default();
+    }
+    if color_enabled() {
         Style::default()
             .fg(Color::Cyan)
             .add_modifier(Modifier::BOLD)
     } else {
-        Style::default()
+        Style::default().add_modifier(Modifier::BOLD)
     }
 }
 

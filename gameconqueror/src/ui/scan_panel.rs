@@ -5,11 +5,11 @@
 use libscanmem::scanroutines::{MatchType, ScanDataType};
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Style};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::widgets::{Block, Borders, Gauge, Paragraph};
 
 use crate::app::AppState;
-use crate::ui::panel_border_style;
+use crate::ui::{color_enabled, panel_border_style};
 
 /// Renders the Scan Panel into `area`. While a scan/refresh is running on a background thread
 /// (`AppState::is_scanning`), shows a progress gauge instead of the usual controls — the scan
@@ -51,9 +51,14 @@ fn render_progress(frame: &mut Frame, area: Rect, done: usize, total: usize, foc
         .borders(Borders::ALL)
         .border_style(panel_border_style(focused))
         .title("Scan Panel — scanning… (Esc: cancel)");
+    let gauge_style = if color_enabled() {
+        Style::default().fg(Color::Cyan)
+    } else {
+        Style::default().add_modifier(Modifier::REVERSED)
+    };
     let gauge = Gauge::default()
         .block(block)
-        .gauge_style(Style::default().fg(Color::Cyan))
+        .gauge_style(gauge_style)
         .ratio(ratio)
         .label(format!("{done}/{total} bytes ({:.0}%)", ratio * 100.0));
 

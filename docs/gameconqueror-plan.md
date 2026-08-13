@@ -354,11 +354,20 @@ round-trips through `Session`; help overlay shows accurate bindings in every foc
 
 ### Phase 6 — Polish + first release (TUI v0.1)
 
-- [ ] Color theme respecting `NO_COLOR`/terminal capability, consistent with the `scanmem` CLI's approach
+- [x] Color theme respecting `NO_COLOR`/terminal capability, consistent with the `scanmem` CLI's approach
   (see repo conventions — no new color-detection logic, reuse the same `std::io::IsTerminal` pattern).
-- [ ] Document the privilege-escalation story (running as root / a documented `sudo`/`pkexec`-wrapper)
-  without committing to porting the old polkit policy file verbatim.
-- [ ] README, CHANGELOG; tag **v0.1.0**.
+  `ui/color_enabled()` (in `ui/mod.rs`) is the single source of truth; every `Color`-styled element
+  (panel borders, status bar, scan progress gauge) falls back to modifier-only styling (`BOLD`/
+  `REVERSED`) when it's `false`.
+- [x] Document the privilege-escalation story (running as root / a documented `sudo`/`pkexec`-wrapper)
+  without committing to porting the old polkit policy file verbatim. See
+  [gameconqueror.md §1](./gameconqueror.md#1-building-and-running) (`sudo`/`setcap`/`pkexec` options)
+  and §9's Troubleshooting entries for the ptrace-scope/crash-handler edge case discovered while
+  dogfooding.
+- [x] README. Root [README.md](../README.md) now covers all three workspace crates, build/privilege
+  instructions, and links to this plan + the usage guide.
+- [ ] CHANGELOG; tag **v0.1.0** — deliberately deferred (out of scope for this pass; no changelog entry
+  needed for an initial/unreleased crate, and tagging is a separate release action).
 
 **Verify**: [ARCHITECTURE.md §8](./ARCHITECTURE.md#8-quality-gates--required-before-every-commit) gates at
 all three feature levels; dogfood full attach → scan → cheat → hex-edit workflow using only the keyboard.
@@ -367,14 +376,18 @@ all three feature levels; dogfood full attach → scan → cheat → hex-edit wo
 
 ## 9. Definition of done (v0.1.0, TUI)
 
-- [ ] `app/` compiles and passes tests under `--no-default-features` — zero `ratatui`/`crossterm` types
+- [x] `app/` compiles and passes tests under `--no-default-features` — zero `ratatui`/`crossterm` types
   outside `ui/`.
-- [ ] No FFI/ctypes-style integration — `gameconqueror` depends on `libscanmem::Session` as an ordinary
+- [x] No FFI/ctypes-style integration — `gameconqueror` depends on `libscanmem::Session` as an ordinary
   typed Rust dependency.
-- [ ] No GTK, no `iced`, no windowing toolkit anywhere in the crate or its dependency tree.
-- [ ] Every action reachable through a documented hotkey; `?`/`F1` help overlay matches `ui/keymap.rs`
+- [x] No GTK, no `iced`, no windowing toolkit anywhere in the crate or its dependency tree.
+- [x] Every action reachable through a documented hotkey; `?`/`F1` help overlay matches `ui/keymap.rs`
   exactly (enforced by the table-driven test in §6).
-- [ ] Full attach → scan → narrow → cheat-list → hex-edit workflow works end-to-end, keyboard-only.
-- [ ] Terminal is restored to a normal state on clean exit **and** on panic.
-- [ ] CI green per [ARCHITECTURE.md §8](./ARCHITECTURE.md#8-quality-gates--required-before-every-commit)
-  across `--no-default-features`, default, `--all-features`.
+- [x] Full attach → scan → narrow → cheat-list → hex-edit workflow works end-to-end, keyboard-only —
+  covered by `tests/integration.rs`'s `--ignored` `fake_target` tests and confirmed manually (dogfooded
+  against a real Steam game).
+- [x] Terminal is restored to a normal state on clean exit **and** on panic.
+- [x] CI green per [ARCHITECTURE.md §8](./ARCHITECTURE.md#8-quality-gates--required-before-every-commit)
+  across `--no-default-features`, default, `--all-features` — and additionally across the two
+  independent optional panels' remaining combinations (`cheat-list` only, `hex-view` only), since `tui`
+  alone no longer implies every panel is built.

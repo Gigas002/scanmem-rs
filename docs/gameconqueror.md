@@ -13,13 +13,30 @@ cargo build -p gameconqueror --release
 ```
 
 `gameconqueror` needs permission to `ptrace`/read-write `/proc/<pid>/mem` for whatever process you
-attach to. In practice that means running it as root, via `sudo`, or with `CAP_SYS_PTRACE` granted
-to the binary — the same requirement `scanmem`'s CLI has.
+attach to — the same requirement `scanmem`'s CLI has. Whether you actually need to elevate for a
+*given* target depends on your kernel's `kernel.yama.ptrace_scope` setting and on whether the
+target already opted itself out of ptrace restriction (some game engines' crash handlers do this;
+see the Troubleshooting note below) — plenty of targets attach with zero elevation. When you do
+need it, pick one:
 
 ```sh
+# 1. sudo — simplest, works everywhere, asks every time
 sudo ./target/release/gameconqueror
-# or attach to a known pid immediately on startup:
-sudo ./target/release/gameconqueror --pid 12345
+sudo ./target/release/gameconqueror --pid 12345   # attach to a known pid immediately
+
+# 2. setcap — grant the capability to the binary once, run unprivileged after that
+sudo setcap cap_sys_ptrace+ep ./target/release/gameconqueror
+./target/release/gameconqueror
+# Note: this persists on the binary itself — anyone able to run it inherits the capability, and
+# it must be re-applied after every rebuild (setcap doesn't survive `cargo build` recompiling the
+# file). Reasonable for a personal workstation binary; not something to ship broadly.
+
+# 3. pkexec — desktop polkit auth dialog instead of a terminal sudo prompt
+pkexec env TERM="$TERM" ./target/release/gameconqueror
+# pkexec strips almost all environment variables for security, including TERM — passing it through
+# explicitly (as above) avoids a raw/mis-rendered terminal frame. This uses polkit's default
+# "authenticate as an administrator" rule; it does not require porting the legacy GameConqueror
+# GTK app's `org.freedesktop.gameconqueror.policy` file.
 ```
 
 | Flag          | Description                                                                           |
@@ -28,6 +45,9 @@ sudo ./target/release/gameconqueror --pid 12345
 
 Logs are written to a file only (never stdout/stderr, which would corrupt the terminal frame) —
 by default `$TMPDIR/gameconqueror.log` (typically `/tmp/gameconqueror.log`).
+
+Colors follow the [`NO_COLOR`](https://no-color.org/) convention (same check as `scanmem`'s CLI):
+set `NO_COLOR=1` to fall back to bold/reverse-video styling instead of ANSI colors.
 
 ### Cargo features
 
@@ -294,8 +314,9 @@ bar reports the write's result (or why it failed, e.g. no process attached).
 
 ## 9. Troubleshooting
 
-| Symptom                               | Cause                                                                                                                                                                                                |
-| ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Attach fails with a permissions error | Run under `sudo`, as root, or grant the binary `CAP_SYS_PTRACE`.                                                                                                                                     |
-| Terminal looks broken after a crash   | Shouldn't happen — a panic hook restores the terminal (disables raw mode, leaves the alternate screen) before the default panic message prints. If it does happen anyway, run `reset` in your shell. |
-| Nothing happens when I run the binary | Check whether it was built with `--no-default-features` (no `tui` feature) — that build has no terminal UI by design.                                                                                |
+| Symptom                                                     | Cause                                                                                                                                                                                                |
+| ------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Attach fails with a permissions error                        | Run under `sudo`, as root, or grant the binary `CAP_SYS_PTRACE` (§1). Check `cat /proc/sys/kernel/yama/ptrace_scope` — `1` (the common default) restricts attaching to non-descendant processes unless you have `CAP_SYS_PTRACE`. |
+| Attach *succeeds* without `sudo`, and that's surprising       | Some targets opt themselves out of ptrace restriction entirely, independent of `ptrace_scope` — e.g. Unity's crash handler process registers `prctl(PR_SET_PTRACER, PR_SET_PTRACER_ANY)` so it can attach to its own parent game process, which as a side effect lets *any* same-user process (`gameconqueror` included) attach too. Not a bug in either program — the target voluntarily disabled its own protection. |
+| Terminal looks broken after a crash                          | Shouldn't happen — a panic hook restores the terminal (disables raw mode, leaves the alternate screen) before the default panic message prints. If it does happen anyway, run `reset` in your shell. |
+| Nothing happens when I run the binary                        | Check whether it was built with `--no-default-features` (no `tui` feature) — that build has no terminal UI by design.                                                                                |

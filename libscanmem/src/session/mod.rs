@@ -112,7 +112,7 @@ pub struct ScanStats {
 /// `old_value` is the *full* value last observed at `address` — [`SwathStore`] itself only keeps
 /// one raw byte per address plus [`MatchFlags`] recording which numeric width(s)/sign(s) matched
 /// there (see the `swath` module), so a multi-byte match (e.g. an `i32`) has its bytes gathered
-/// and decoded back into a single value on the way out; see [`reconstruct_value`].
+/// and decoded back into a single value on the way out; see `reconstruct_value`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MatchView {
     pub address: usize,
