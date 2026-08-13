@@ -1,6 +1,6 @@
 //! Scan Panel: cycles the scan's data type/match type and edits its free-text value/range input,
-//! then runs or resets a scan against the attached session — `ui/keymap.rs` owns the actual key
-//! bindings, this module only renders `AppState`.
+//! then scans (narrowing or from scratch) or refreshes the match set against the attached
+//! session — `ui/keymap.rs` owns the actual key bindings, this module only renders `AppState`.
 
 use libscanmem::scanroutines::{MatchType, ScanDataType};
 use ratatui::Frame;
@@ -11,7 +11,7 @@ use ratatui::widgets::{Block, Borders, Gauge, Paragraph};
 use crate::app::AppState;
 use crate::ui::panel_border_style;
 
-/// Renders the Scan Panel into `area`. While a scan/snapshot is running on a background thread
+/// Renders the Scan Panel into `area`. While a scan/refresh is running on a background thread
 /// (`AppState::is_scanning`), shows a progress gauge instead of the usual controls — the scan
 /// itself never blocks rendering, so this bar visibly advances instead of the whole TUI just
 /// freezing until it's done. Otherwise shows the current data type/match type, the value/range
@@ -38,7 +38,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState, focused: bool) {
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(panel_border_style(focused))
-        .title("Scan Panel — t: type, m: match, /: value, s: scan, n: snapshot, r: reset");
+        .title("Scan Panel — t: type, m: match, /: value, s: scan, n: new scan, r: refresh");
 
     frame.render_widget(Paragraph::new(text).block(block), area);
 }

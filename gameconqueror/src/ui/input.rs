@@ -1,8 +1,6 @@
 //! Translates a `crossterm::event::KeyEvent` into a [`Msg`] via `ui/keymap.rs` and applies it —
 //! the only place in `ui/` that reads raw key events.
 
-#[cfg(feature = "cheat-list")]
-use libscanmem::value::Value;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
 use crate::app::{self, AppState, Focus, Msg};
@@ -40,6 +38,7 @@ pub fn handle_key(state: &mut AppState, key: KeyEvent) {
         return;
     }
 
+    #[allow(clippy::needless_return)]
     if state.focus() == Focus::ProcessPicker
         && key.code == KeyCode::Enter
         && let Some(pid) = state.selected_process().map(|process| process.pid)
@@ -48,18 +47,22 @@ pub fn handle_key(state: &mut AppState, key: KeyEvent) {
         return;
     }
 
+    #[cfg(feature = "hex-view")]
+    #[allow(clippy::needless_return)]
     if let Some(msg) = hex_view_edit_msg(state, key) {
         app::update(state, msg);
         return;
     }
 
-    #[cfg_attr(not(feature = "cheat-list"), allow(clippy::needless_return))]
+    #[cfg(feature = "hex-view")]
+    #[allow(clippy::needless_return)]
     if let Some(msg) = match_view_focus_hex_msg(state, key) {
         app::update(state, msg);
         return;
     }
 
-    #[cfg(feature = "cheat-list")]
+    #[cfg(all(feature = "cheat-list", feature = "hex-view"))]
+    #[allow(clippy::needless_return)]
     if let Some(msg) = cheat_view_focus_hex_msg(state, key) {
         app::update(state, msg);
         return;
@@ -129,7 +132,7 @@ fn match_view_add_cheat_msg(state: &AppState, key: KeyEvent) -> Option<Msg> {
     state.selected_match().map(|entry| Msg::AddCheat {
         address: entry.address,
         description: String::new(),
-        value: Value::U8(entry.old_value),
+        value: entry.old_value,
     })
 }
 
@@ -137,6 +140,7 @@ fn match_view_add_cheat_msg(state: &AppState, key: KeyEvent) -> Option<Msg> {
 /// composing the in-progress byte edit at the cursor — `ui/keymap.rs` can't do this since it
 /// needs the current [`AppState::hex_edit_input`] to append/remove a digit. `None` for any other
 /// key so it falls through to the normal global/per-focus lookup (arrows, `Enter`, `Esc`).
+#[cfg(feature = "hex-view")]
 fn hex_view_edit_msg(state: &AppState, key: KeyEvent) -> Option<Msg> {
     if state.focus() != Focus::HexView {
         return None;
@@ -158,6 +162,7 @@ fn hex_view_edit_msg(state: &AppState, key: KeyEvent) -> Option<Msg> {
 
 /// Builds the `Msg` for `h` pressed on the Match View, focusing the Hex View on the selected
 /// match's address (same `AppState`-access reasoning as [`match_view_add_cheat_msg`]).
+#[cfg(feature = "hex-view")]
 fn match_view_focus_hex_msg(state: &AppState, key: KeyEvent) -> Option<Msg> {
     if state.focus() != Focus::MatchView || key.code != KeyCode::Char('h') {
         return None;
@@ -169,7 +174,7 @@ fn match_view_focus_hex_msg(state: &AppState, key: KeyEvent) -> Option<Msg> {
 
 /// Builds the `Msg` for `h` pressed on the Cheat View, focusing the Hex View on the selected
 /// cheat's address (same `AppState`-access reasoning as [`match_view_add_cheat_msg`]).
-#[cfg(feature = "cheat-list")]
+#[cfg(all(feature = "cheat-list", feature = "hex-view"))]
 fn cheat_view_focus_hex_msg(state: &AppState, key: KeyEvent) -> Option<Msg> {
     if state.focus() != Focus::CheatView || key.code != KeyCode::Char('h') {
         return None;
@@ -188,6 +193,7 @@ fn search_input_msg(state: &AppState, key: KeyEvent) -> Option<Msg> {
         Focus::MatchView => match_filter_msg(state, key),
         #[cfg(feature = "cheat-list")]
         Focus::CheatView => cheat_value_msg(state, key),
+        #[cfg(feature = "hex-view")]
         Focus::HexView => None,
     }
 }

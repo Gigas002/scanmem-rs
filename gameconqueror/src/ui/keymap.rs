@@ -7,6 +7,7 @@
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::app::{Direction, Focus, Msg};
+#[cfg(feature = "hex-view")]
 use crate::ui::hex_view::BYTES_PER_ROW;
 
 /// One documented, statically dispatchable key binding.
@@ -176,19 +177,19 @@ pub fn focus_bindings(focus: Focus) -> Vec<Binding> {
                 key: (KeyCode::Char('s'), KeyModifiers::NONE),
                 msg: Msg::RunScan,
                 label: "s",
-                description: "run the scan",
+                description: "run the scan — narrows current matches if any, otherwise scans from scratch",
             },
             Binding {
                 key: (KeyCode::Char('n'), KeyModifiers::NONE),
-                msg: Msg::Snapshot,
+                msg: Msg::NewScan,
                 label: "n",
-                description: "snapshot every considered byte",
+                description: "new scan — discards current matches and scans from scratch",
             },
             Binding {
                 key: (KeyCode::Char('r'), KeyModifiers::NONE),
-                msg: Msg::ResetScan,
+                msg: Msg::RefreshMatches,
                 label: "r",
-                description: "reset the match set",
+                description: "refresh the current matches' values in place, without narrowing",
             },
         ],
         Focus::MatchView => vec![
@@ -256,6 +257,7 @@ pub fn focus_bindings(focus: Focus) -> Vec<Binding> {
                 description: "move selection down",
             },
         ],
+        #[cfg(feature = "hex-view")]
         Focus::HexView => vec![
             Binding {
                 key: (KeyCode::Left, KeyModifiers::NONE),
@@ -308,12 +310,15 @@ pub fn dynamic_bindings(focus: Focus) -> Vec<DynamicBinding> {
             label: "Enter",
             description: "attach to the selected process",
         }],
+        #[allow(clippy::vec_init_then_push)]
         Focus::MatchView => {
-            #[cfg_attr(not(feature = "cheat-list"), allow(unused_mut))]
-            let mut bindings = vec![DynamicBinding {
+            #[allow(unused_mut)]
+            let mut bindings = Vec::new();
+            #[cfg(feature = "hex-view")]
+            bindings.push(DynamicBinding {
                 label: "h",
                 description: "open hex view at the selected match",
-            }];
+            });
             #[cfg(feature = "cheat-list")]
             bindings.push(DynamicBinding {
                 label: "a",
@@ -322,20 +327,27 @@ pub fn dynamic_bindings(focus: Focus) -> Vec<DynamicBinding> {
             bindings
         }
         #[cfg(feature = "cheat-list")]
-        Focus::CheatView => vec![
-            DynamicBinding {
-                label: "Space",
-                description: "toggle freeze",
-            },
-            DynamicBinding {
-                label: "e",
-                description: "edit the value inline",
-            },
-            DynamicBinding {
+        Focus::CheatView => {
+            #[allow(unused_mut)]
+            let mut bindings = vec![
+                DynamicBinding {
+                    label: "Space",
+                    description: "toggle freeze",
+                },
+                DynamicBinding {
+                    label: "e",
+                    description: "edit the value inline",
+                },
+            ];
+            #[cfg(feature = "hex-view")]
+            bindings.push(DynamicBinding {
                 label: "h",
                 description: "open hex view at the selected cheat",
-            },
-        ],
-        Focus::ScanPanel | Focus::HexView => Vec::new(),
+            });
+            bindings
+        }
+        Focus::ScanPanel => Vec::new(),
+        #[cfg(feature = "hex-view")]
+        Focus::HexView => Vec::new(),
     }
 }

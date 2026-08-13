@@ -19,27 +19,26 @@ pub enum Msg {
     /// completes — used for direct/scripted invocation (and in tests) where that's fine; the
     /// interactive TUI always goes through `RunScan` instead so a slow scan can't freeze it.
     Scan(ScanExpr),
-    /// Reseed the match set with every byte of every considered region, on a background thread —
-    /// same non-blocking reasoning as `RunScan`.
-    Snapshot,
-    /// Checks whether a background scan/snapshot started by `RunScan`/`Snapshot` has finished;
-    /// if so, restores the session and reports its outcome. A no-op if none is running or it
-    /// hasn't finished yet — the event loop dispatches this every iteration, not just after
+    /// Checks whether a background scan started by `RunScan`/`NewScan`/`RefreshMatches` has
+    /// finished; if so, restores the session and reports its outcome. A no-op if none is running
+    /// or it hasn't finished yet — the event loop dispatches this every iteration, not just after
     /// starting one.
     PollScan,
-    /// Discard the current match set without detaching.
-    ResetScan,
     /// Write a value into the target's address space.
     Write { address: usize, value: Value },
     /// Load a window of session memory centered on `address` into the Hex View buffer and switch
     /// focus to it.
+    #[cfg(feature = "hex-view")]
     FocusHexView(usize),
     /// Move the Hex View cursor by this many bytes, clamped to the loaded buffer.
+    #[cfg(feature = "hex-view")]
     MoveHexCursor(isize),
     /// Set the Hex View's in-progress byte-edit input at the cursor, replacing any previous one.
+    #[cfg(feature = "hex-view")]
     SetHexEditInput(String),
     /// Parse the in-progress byte edit and write it to the cursor's address, updating the loaded
     /// buffer on success.
+    #[cfg(feature = "hex-view")]
     CommitHexEdit,
     /// Record a new cheat-list entry.
     #[cfg(feature = "cheat-list")]
@@ -98,9 +97,18 @@ pub enum Msg {
     SetScanInput(String),
     /// Build a `ScanExpr` from the Scan Panel's current data type/match type/input and run it on
     /// a background thread so the UI keeps rendering — a scan can easily take longer than a
-    /// frame; `Session::scan` picks first vs. narrowing based on whether matches are already
-    /// recorded. Poll for the result with `PollScan`.
+    /// frame; narrows the current matches if any are already recorded, otherwise scans from
+    /// scratch (so with no matches yet, this is equivalent to `NewScan`). Poll for the result
+    /// with `PollScan`.
     RunScan,
+    /// Like `RunScan`, but always discards the current matches and scans from scratch, even if
+    /// some are already recorded — `n` in the Scan Panel.
+    NewScan,
+    /// Re-reads every currently recorded match's value in place, on a background thread — never
+    /// narrows or drops a match just because its value changed (only a swath whose region has
+    /// gone unreadable is dropped), independent of whatever data type/match type/value is
+    /// currently selected in the Scan Panel. `r` in the Scan Panel.
+    RefreshMatches,
     /// Cycle the Match View's sort column.
     CycleMatchSort,
     /// Set the Match View's incremental filter query, replacing any previous one.

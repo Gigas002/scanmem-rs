@@ -4,6 +4,7 @@
 #[cfg(feature = "cheat-list")]
 mod cheat_view;
 mod help_overlay;
+#[cfg(feature = "hex-view")]
 mod hex_view;
 mod input;
 mod keymap;

@@ -82,11 +82,11 @@ pub struct AttachedProcess {
     pub name: String,
 }
 
-/// A scan or snapshot running on a background thread, started by `Msg::RunScan`/`Msg::Snapshot`
-/// so a slow scan can't freeze the UI. Owns the `Session` for the duration — it's moved out of
-/// `AppState` when the job starts and moved back once `Msg::PollScan` observes a result on `rx`
-/// — plus handles to watch its progress and request it stop early without needing the `Session`
-/// itself (which isn't available to the UI thread while the job is running).
+/// A scan or refresh running on a background thread, started by `Msg::RunScan`/`Msg::NewScan`/
+/// `Msg::RefreshMatches` so a slow one can't freeze the UI. Owns the `Session` for the duration —
+/// it's moved out of `AppState` when the job starts and moved back once `Msg::PollScan` observes
+/// a result on `rx` — plus handles to watch its progress and request it stop early without
+/// needing the `Session` itself (which isn't available to the UI thread while the job is running).
 #[derive(Debug)]
 pub(super) struct ScanJob {
     pub(super) rx: mpsc::Receiver<(Session, Result<ScanStats, ScanmemError>)>,
@@ -145,9 +145,13 @@ pub struct AppState {
     pub(super) match_sort: MatchSortColumn,
     pub(super) match_filter: String,
     pub(super) match_selected: usize,
+    #[cfg(feature = "hex-view")]
     pub(super) hex_buffer: Vec<u8>,
+    #[cfg(feature = "hex-view")]
     pub(super) hex_base_address: usize,
+    #[cfg(feature = "hex-view")]
     pub(super) hex_cursor: usize,
+    #[cfg(feature = "hex-view")]
     pub(super) hex_edit_input: String,
     pub(super) focus: Focus,
     pub(super) expanded: bool,
@@ -186,9 +190,13 @@ impl Default for AppState {
             match_sort: MatchSortColumn::Address,
             match_filter: String::new(),
             match_selected: 0,
+            #[cfg(feature = "hex-view")]
             hex_buffer: Vec::new(),
+            #[cfg(feature = "hex-view")]
             hex_base_address: 0,
+            #[cfg(feature = "hex-view")]
             hex_cursor: 0,
+            #[cfg(feature = "hex-view")]
             hex_edit_input: String::new(),
             focus: Focus::default(),
             expanded: false,
@@ -211,8 +219,8 @@ impl AppState {
         self.attached.as_ref()
     }
 
-    /// `true` while a scan/snapshot started by `Msg::RunScan`/`Msg::Snapshot` is running on a
-    /// background thread. [`Self::session`] is unavailable for the duration.
+    /// `true` while a scan/refresh started by `Msg::RunScan`/`Msg::NewScan`/`Msg::RefreshMatches`
+    /// is running on a background thread. [`Self::session`] is unavailable for the duration.
     pub fn is_scanning(&self) -> bool {
         self.scan_job.is_some()
     }
@@ -364,7 +372,14 @@ impl AppState {
 
         match self.match_sort {
             MatchSortColumn::Address => matches.sort_by_key(|entry| entry.address),
-            MatchSortColumn::Value => matches.sort_by_key(|entry| entry.old_value),
+            // `Value` can't be `Ord` (its float variants are only `PartialOrd`), so sort by its
+            // numeric widening instead of the raw value.
+            MatchSortColumn::Value => matches.sort_by(|a, b| {
+                a.old_value
+                    .numeric_key()
+                    .partial_cmp(&b.old_value.numeric_key())
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            }),
         }
 
         matches
@@ -376,22 +391,26 @@ impl AppState {
     }
 
     /// The bytes currently loaded into the Hex View, starting at [`Self::hex_base_address`].
+    #[cfg(feature = "hex-view")]
     pub fn hex_buffer(&self) -> &[u8] {
         &self.hex_buffer
     }
 
     /// The address [`Self::hex_buffer`]'s first byte is loaded from.
+    #[cfg(feature = "hex-view")]
     pub fn hex_base_address(&self) -> usize {
         self.hex_base_address
     }
 
     /// The Hex View cursor's offset within [`Self::hex_buffer`].
+    #[cfg(feature = "hex-view")]
     pub fn hex_cursor(&self) -> usize {
         self.hex_cursor
     }
 
     /// The address of the byte currently under the Hex View cursor, or `None` if no bytes are
     /// loaded.
+    #[cfg(feature = "hex-view")]
     pub fn hex_cursor_address(&self) -> Option<usize> {
         if self.hex_cursor < self.hex_buffer.len() {
             Some(self.hex_base_address + self.hex_cursor)
@@ -401,6 +420,7 @@ impl AppState {
     }
 
     /// The Hex View's in-progress byte-edit input at the cursor, if any.
+    #[cfg(feature = "hex-view")]
     pub fn hex_edit_input(&self) -> &str {
         &self.hex_edit_input
     }

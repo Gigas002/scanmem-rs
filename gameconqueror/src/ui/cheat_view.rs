@@ -56,6 +56,6 @@ fn title(state: &AppState) -> String {
     if state.search_active() {
         format!("Cheat View — editing value: {}_", state.cheat_value_input())
     } else {
-        "Cheat View — space: freeze, e: edit value".to_owned()
+        "Cheat View — space: freeze, e: edit value, h: hex view".to_owned()
     }
 }

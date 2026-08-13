@@ -99,6 +99,56 @@ impl SwathStore {
         Some((swath.address_of(location.entry_index), entry))
     }
 
+    /// Same iteration as [`Self::matches`], but also yielding each match's [`MatchLocation`] —
+    /// callers that need to look up its full recorded width (e.g. [`Self::match_bytes`]) need
+    /// this; plain address/entry access doesn't, hence [`Self::matches`] staying as it is instead
+    /// of every caller paying for a `MatchLocation` it won't use.
+    pub fn matches_with_location(
+        &self,
+    ) -> impl Iterator<Item = (MatchLocation, usize, &SwathEntry)> + '_ {
+        self.swaths
+            .iter()
+            .enumerate()
+            .flat_map(|(swath_index, swath)| {
+                swath
+                    .entries
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, entry)| !entry.flags.is_empty())
+                    .map(move |(entry_index, entry)| {
+                        let location = MatchLocation {
+                            swath_index,
+                            entry_index,
+                        };
+                        (location, swath.address_of(entry_index), entry)
+                    })
+            })
+    }
+
+    /// The raw bytes a match spans: its own byte at `location`, plus every immediately following
+    /// contiguity-filler byte (empty [`MatchFlags`]) in the same swath — reconstructs a
+    /// multi-byte match's full recorded value from storage that otherwise only keeps one flagged
+    /// byte per match. Mirrors the exact grouping `narrow_swath` (in `session`) already uses to
+    /// re-test a match's old bytes, so the two never disagree about which bytes belong together.
+    /// `None` if `location` is out of bounds.
+    pub fn match_bytes(&self, location: MatchLocation) -> Option<Vec<u8>> {
+        let swath = self.swaths.get(location.swath_index)?;
+        let start = location.entry_index;
+        if start >= swath.entries.len() {
+            return None;
+        }
+        let mut end = start + 1;
+        while end < swath.entries.len() && swath.entries[end].flags.is_empty() {
+            end += 1;
+        }
+        Some(
+            swath.entries[start..end]
+                .iter()
+                .map(|e| e.old_value)
+                .collect(),
+        )
+    }
+
     /// Removes every recorded byte whose address falls in `[start, end)`, compacting the
     /// remaining bytes into (possibly fewer, possibly merged) swaths — replaces
     /// `delete_in_address_range`.

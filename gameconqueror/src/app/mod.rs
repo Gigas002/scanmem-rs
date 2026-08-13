@@ -18,7 +18,9 @@ use std::thread;
 use libscanmem::error::ScanmemError;
 use libscanmem::scanroutines::{MatchType, ScanDataType};
 use libscanmem::session::{ScanCriterion, ScanExpr, ScanStats, Session};
-use libscanmem::value::{self, UserValue, Value};
+#[cfg(any(feature = "cheat-list", feature = "hex-view"))]
+use libscanmem::value::Value;
+use libscanmem::value::{self, UserValue};
 
 pub use focus::{Direction, Focus};
 pub use msg::Msg;
@@ -40,21 +42,23 @@ pub fn update(state: &mut AppState, msg: Msg) {
                 .scan(&expr)
                 .map(|stats| format!("{} match(es)", stats.matches))
         })),
-        Msg::Snapshot => Some(spawn_scan(state, Session::run_snapshot)),
         Msg::PollScan => poll_scan(state),
-        Msg::ResetScan => Some(reset_scan(state)),
         Msg::Write { address, value } => Some(with_session(state, |session| {
             session.write(address, &value).map(|()| "ok".to_owned())
         })),
+        #[cfg(feature = "hex-view")]
         Msg::FocusHexView(address) => Some(focus_hex_view(state, address)),
+        #[cfg(feature = "hex-view")]
         Msg::MoveHexCursor(delta) => {
             move_hex_cursor(state, delta);
             None
         }
+        #[cfg(feature = "hex-view")]
         Msg::SetHexEditInput(input) => {
             state.hex_edit_input = input;
             None
         }
+        #[cfg(feature = "hex-view")]
         Msg::CommitHexEdit => Some(commit_hex_edit(state)),
         #[cfg(feature = "cheat-list")]
         Msg::AddCheat {
@@ -116,6 +120,8 @@ pub fn update(state: &mut AppState, msg: Msg) {
             None
         }
         Msg::RunScan => Some(run_scan(state)),
+        Msg::NewScan => Some(new_scan(state)),
+        Msg::RefreshMatches => Some(spawn_scan(state, Session::refresh_matches)),
         Msg::CycleMatchSort => {
             state.match_sort = state.match_sort.next();
             state.match_selected = 0;
@@ -181,8 +187,7 @@ pub fn update(state: &mut AppState, msg: Msg) {
                 // `Msg::PollScan` picks up the (partial) result once it actually finishes.
                 job.stop_flag.request();
                 Some(Status::info("cancelling scan…"))
-            } else if state.focus == Focus::HexView && !state.hex_edit_input.is_empty() {
-                state.hex_edit_input.clear();
+            } else if dismiss_hex_edit_if_open(state) {
                 None
             } else if state.search_active {
                 state.search_active = false;
@@ -201,6 +206,7 @@ pub fn update(state: &mut AppState, msg: Msg) {
                         state.cheat_value_input.clear();
                         state.cheat_editing_index = None;
                     }
+                    #[cfg(feature = "hex-view")]
                     Focus::HexView => {}
                 }
                 None
@@ -239,23 +245,15 @@ fn detach(state: &mut AppState) -> Status {
     }
 }
 
-fn reset_scan(state: &mut AppState) -> Status {
-    match state.session.as_mut() {
-        Some(session) => {
-            session.delete_in_range(0..usize::MAX);
-            Status::info("scan reset")
-        }
-        None => not_attached(state),
-    }
-}
-
 /// Bytes of session memory loaded into the Hex View on either side of the focused address.
+#[cfg(feature = "hex-view")]
 const HEX_VIEW_BUFFER_LEN: usize = 256;
 
 /// Loads [`HEX_VIEW_BUFFER_LEN`] bytes of session memory centered on `address` into the Hex View
 /// buffer and switches focus to it. Falls back to reading forward from `address` (rather than
 /// centered) if the centered window crosses into unmapped memory, since a match sitting near the
 /// start of its region would otherwise always fail to open.
+#[cfg(feature = "hex-view")]
 fn focus_hex_view(state: &mut AppState, address: usize) -> Status {
     let Some(session) = state.session.as_mut() else {
         return not_attached(state);
@@ -282,6 +280,7 @@ fn focus_hex_view(state: &mut AppState, address: usize) -> Status {
 
 /// Moves `state.hex_cursor` by `delta` bytes, clamped to `state.hex_buffer`'s bounds; a no-op if
 /// the buffer is empty.
+#[cfg(feature = "hex-view")]
 fn move_hex_cursor(state: &mut AppState, delta: isize) {
     if state.hex_buffer.is_empty() {
         return;
@@ -293,6 +292,7 @@ fn move_hex_cursor(state: &mut AppState, delta: isize) {
 
 /// Parses `state.hex_edit_input` as a hex byte and writes it to the address under the Hex View
 /// cursor, updating `state.hex_buffer` on success.
+#[cfg(feature = "hex-view")]
 fn commit_hex_edit(state: &mut AppState) -> Status {
     let input = std::mem::take(&mut state.hex_edit_input);
     if input.is_empty() {
@@ -523,6 +523,23 @@ fn close_path_prompt_if_open(_state: &mut AppState) -> bool {
     false
 }
 
+/// Clears an in-progress Hex View byte edit if one is open, reporting whether it did — same
+/// early-exit-from-`Msg::Dismiss` shape as [`close_path_prompt_if_open`].
+#[cfg(feature = "hex-view")]
+fn dismiss_hex_edit_if_open(state: &mut AppState) -> bool {
+    if state.focus == Focus::HexView && !state.hex_edit_input.is_empty() {
+        state.hex_edit_input.clear();
+        true
+    } else {
+        false
+    }
+}
+
+#[cfg(not(feature = "hex-view"))]
+fn dismiss_hex_edit_if_open(_state: &mut AppState) -> bool {
+    false
+}
+
 fn refresh_process_list(state: &mut AppState) -> Status {
     state.processes = process_list::list_processes();
     state.process_selected = 0;
@@ -622,8 +639,16 @@ fn run_scan(state: &mut AppState) -> Status {
     }
 }
 
-/// Starts `run` (a first/narrowing scan or a snapshot) on a background thread so the UI keeps
-/// rendering and responding to input while it works — either can easily take longer than a
+/// Like [`run_scan`], but always discards the current matches and scans from scratch — `Msg::NewScan`.
+fn new_scan(state: &mut AppState) -> Status {
+    match build_scan_expr(state) {
+        Ok(expr) => spawn_scan(state, move |session| session.run_new_scan(&expr)),
+        Err(err) => Status::error(err),
+    }
+}
+
+/// Starts `run` (a first/narrowing/new scan, or a refresh) on a background thread so the UI keeps
+/// rendering and responding to input while it works — each can easily take longer than a
 /// frame over a large address space. Moves `state.session` into the thread for the duration;
 /// `Msg::PollScan` moves it back once the thread sends a result. `state.attached` is untouched,
 /// so the UI keeps showing what it's attached to throughout.
@@ -666,7 +691,7 @@ fn spawn_scan(
     Status::info("scanning…")
 }
 
-/// Checks whether the in-progress background scan/snapshot has finished; if so, resumes the
+/// Checks whether the in-progress background scan/refresh has finished; if so, resumes the
 /// target (see [`spawn_scan`] for why that must happen here rather than on the background
 /// thread), restores `state.session`, and reports the scan's outcome. Dispatched every
 /// event-loop iteration via `Msg::PollScan`; a no-op if no scan is running or it hasn't sent a

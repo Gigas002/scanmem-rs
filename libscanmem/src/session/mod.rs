@@ -108,10 +108,15 @@ pub struct ScanStats {
 }
 
 /// A recorded match, as returned by [`Session::matches`]/[`Session::nth_match`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// `old_value` is the *full* value last observed at `address` — [`SwathStore`] itself only keeps
+/// one raw byte per address plus [`MatchFlags`] recording which numeric width(s)/sign(s) matched
+/// there (see the `swath` module), so a multi-byte match (e.g. an `i32`) has its bytes gathered
+/// and decoded back into a single value on the way out; see [`reconstruct_value`].
+#[derive(Debug, Clone, PartialEq)]
 pub struct MatchView {
     pub address: usize,
-    pub old_value: u8,
+    pub old_value: Value,
     pub flags: MatchFlags,
 }
 
@@ -220,6 +225,15 @@ impl Session {
         }
     }
 
+    /// Runs a scan against every considered byte from scratch, discarding any current matches
+    /// even if some exist — unlike [`Self::run_scan`], which narrows the current matches instead
+    /// of rescanning from scratch whenever any are already recorded. Same
+    /// prepare-first/any-thread-safe contract as [`Self::run_scan`].
+    pub fn run_new_scan(&mut self, expr: &ScanExpr) -> Result<ScanStats> {
+        validate(expr)?;
+        self.first_scan(expr)
+    }
+
     /// Records every byte of every considered region as a candidate match, discarding any
     /// current matches. Same prepare-first/any-thread-safe contract as [`Self::run_scan`].
     pub fn run_snapshot(&mut self) -> Result<ScanStats> {
@@ -230,22 +244,75 @@ impl Session {
         })
     }
 
+    /// Re-reads every currently recorded match's bytes fresh from the target and updates their
+    /// stored values in place. Unlike [`Self::run_scan`]'s narrowing, this never filters by
+    /// value or needs a [`ScanExpr`] — every match is kept regardless of what its new value turns
+    /// out to be; a match is only dropped if its swath's region has become unreadable entirely
+    /// (e.g. unmapped since the last scan), same as a narrowing scan's read-failure handling.
+    /// Same prepare-first/any-thread-safe contract as [`Self::run_scan`].
+    pub fn refresh_matches(&mut self) -> Result<ScanStats> {
+        let old_swaths = std::mem::take(&mut self.matches);
+        self.progress.reset(
+            old_swaths
+                .swaths()
+                .iter()
+                .map(|swath| swath.entries.len())
+                .sum(),
+        );
+
+        let mut store = SwathStore::new();
+        for swath in old_swaths.swaths() {
+            if self.stop_flag.requested() {
+                break;
+            }
+            let Ok(fresh) = self
+                .process()?
+                .read(swath.first_byte_in_child, swath.entries.len())
+            else {
+                self.progress.add(swath.entries.len());
+                continue;
+            };
+            for (index, &byte) in fresh.iter().enumerate() {
+                store.add(swath.address_of(index), byte, swath.entries[index].flags);
+            }
+            self.progress.add(swath.entries.len());
+        }
+
+        self.matches = store;
+        Ok(ScanStats {
+            matches: self.matches.match_count(),
+        })
+    }
+
     /// Every currently recorded match, in ascending address order.
     pub fn matches(&self) -> impl Iterator<Item = MatchView> + '_ {
-        self.matches.matches().map(|(address, entry)| MatchView {
-            address,
-            old_value: entry.old_value,
-            flags: entry.flags,
-        })
+        let endianness = self.options.endianness;
+        self.matches
+            .matches_with_location()
+            .map(move |(location, address, entry)| {
+                let bytes = self
+                    .matches
+                    .match_bytes(location)
+                    .expect("location came from this same store's matches_with_location");
+                MatchView {
+                    address,
+                    old_value: reconstruct_value(&bytes, entry.flags, endianness),
+                    flags: entry.flags,
+                }
+            })
     }
 
     /// The `n`th recorded match (0-indexed), or `None` if there are fewer than `n + 1`.
     pub fn nth_match(&self, n: usize) -> Option<MatchView> {
         let location = self.matches.nth_match(n)?;
         let (address, entry) = self.matches.entry_at(location)?;
+        let bytes = self
+            .matches
+            .match_bytes(location)
+            .expect("location came from this same store's nth_match");
         Some(MatchView {
             address,
-            old_value: entry.old_value,
+            old_value: reconstruct_value(&bytes, entry.flags, self.options.endianness),
             flags: entry.flags,
         })
     }
@@ -490,6 +557,56 @@ fn narrow_swath(
         index = end;
     }
     results
+}
+
+/// Reconstructs the full-width [`Value`] a match's raw `bytes` (as returned by
+/// [`SwathStore::match_bytes`]) represent, honoring `endianness` and the [`MatchFlags`] recorded
+/// for the match's first byte.
+///
+/// A byte-array/string pattern match is the only case [`probe`] sets every [`MatchFlags`] bit at
+/// once — recognized here by `bytes.len() > 1` (a plain numeric scan never sets every bit *and*
+/// spans more than one byte, since [`scan`](scanroutines::scan) only sets the bits for the widths
+/// it actually tried) and rendered as raw [`Value::Bytes`] instead of a spurious numeric guess.
+/// Otherwise picks the highest-priority matching numeric interpretation that fits `bytes` — float
+/// over integer, wider over narrower, signed over unsigned at the same width. Ties (a value that
+/// matched as both `u32` and `i32`, say) have no single "correct" answer, so this is a
+/// deterministic, documented pick rather than a recovery of the user's exact original scan-time
+/// intent, which the recorded flags alone can't distinguish.
+fn reconstruct_value(bytes: &[u8], flags: MatchFlags, endianness: Endianness) -> Value {
+    if bytes.len() > 1 && flags == MatchFlags::all() {
+        return Value::Bytes(bytes.to_vec());
+    }
+
+    let numbers = scanroutines::decode_number(bytes, endianness);
+    let candidates = [
+        (MatchFlags::F64, numbers.f64.map(Value::F64)),
+        (MatchFlags::F32, numbers.f32.map(Value::F32)),
+        (MatchFlags::S64, numbers.i64.map(Value::I64)),
+        (MatchFlags::U64, numbers.u64.map(Value::U64)),
+        (MatchFlags::S32, numbers.i32.map(Value::I32)),
+        (MatchFlags::U32, numbers.u32.map(Value::U32)),
+        (MatchFlags::S16, numbers.i16.map(Value::I16)),
+        (MatchFlags::U16, numbers.u16.map(Value::U16)),
+        (MatchFlags::S8, numbers.i8.map(Value::I8)),
+        (MatchFlags::U8, numbers.u8.map(Value::U8)),
+    ];
+    for (bit, value) in candidates {
+        if flags.contains(bit)
+            && let Some(value) = value
+        {
+            return value;
+        }
+    }
+
+    // Only reachable with hand-built `SwathEntry`s (e.g. in tests) whose flags claim a width
+    // wider than the bytes actually recorded — every real scan's flags always fit its own width.
+    numbers
+        .u64
+        .map(Value::U64)
+        .or(numbers.u32.map(Value::U32))
+        .or(numbers.u16.map(Value::U16))
+        .or(numbers.u8.map(Value::U8))
+        .unwrap_or_else(|| Value::Bytes(bytes.to_vec()))
 }
 
 /// Converts a [`Value`] to its raw byte representation, honoring `endianness` for numeric

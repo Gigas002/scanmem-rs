@@ -31,17 +31,21 @@ by default `$TMPDIR/gameconqueror.log` (typically `/tmp/gameconqueror.log`).
 
 ### Cargo features
 
-| Feature      | Default | Adds                                                                                                                                                                                                                                  |
+| Feature      | Default | Adds                                                                                                                                                                                                        |
 | ------------ | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `tui`        | **on**  | The `ratatui`/`crossterm` terminal UI itself. Building without it produces a binary with no UI (see below).                                                                                                                           |
-| `cheat-list` | **off** | The Cheat View panel: pinning matches, freezing/rewriting their value continuously, and saving/loading a cheat list to disk. Disabled by default because it's the newest, least-stable panel — enable it explicitly once you want it. |
+| `tui`        | **on**  | The `ratatui`/`crossterm` terminal UI itself. Building without it produces a binary with no UI (see below).                                                                                               |
+| `cheat-list` | **on**  | The Cheat View panel: pinning matches, freezing/rewriting their value continuously, and saving/loading a cheat list to disk.                                                                              |
+| `hex-view`   | **off** | The Hex View panel: raw byte-level inspection/editing of memory around an address, independent of the match-tracking system. Opt-in since most editing goes through the Cheat View once it's enabled.    |
 
 ```sh
-# default build: process picker, scan panel, match view — no cheat list
+# default build: process picker, scan panel, match view, cheat list — no hex view
 cargo build -p gameconqueror
 
-# with the cheat list panel enabled
-cargo build -p gameconqueror --features cheat-list
+# with the hex view panel enabled too
+cargo build -p gameconqueror --features hex-view
+
+# a minimal build: process picker, scan panel, match view only
+cargo build -p gameconqueror --no-default-features --features tui
 
 # everything
 cargo build -p gameconqueror --all-features
@@ -64,28 +68,30 @@ widget layout):
 ├─────────────────┴───────────────────────────┤
 │ Match View       │ Cheat View (cheat-list)   │
 ├───────────────────────────────────────────────┤
-│ Hex View                                     │
+│ Hex View (hex-view)                          │
 └───────────────────────────────────────────────┘
 ```
 
 > Without the `cheat-list` feature (§1), Match View spans the full width of its row instead of
-> sharing it with Cheat View.
+> sharing it with Cheat View. Without the `hex-view` feature, the Hex View row is dropped
+> entirely, leaving a 2-row grid.
 
 Exactly one panel has **focus** at any time — its border is highlighted — and every panel-specific
 key binding (§4-§8) is interpreted relative to it. Typing (e.g. into a filter or the Scan Panel's
 value input) only affects the focused panel; every other panel keeps showing its own live state
 untouched, since they're all rendered every frame regardless of focus.
 
-| Key                 | Action                                                                 |
-| ------------------- | ----------------------------------------------------------------------- |
-| `Ctrl` + arrow key  | Move focus to whichever panel sits in that direction on the grid above  |
+| Key                 | Action                                                                                                                                    |
+| ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `Ctrl` + arrow key  | Move focus to whichever panel sits in that direction on the grid above                                                                    |
 | `Tab` / `Shift+Tab` | Cycle focus forward/backward through every panel, in a fixed order (see below) — a fallback for terminals that don't forward `Ctrl+Arrow` |
-| `Ctrl+E`            | Expand the focused panel to fill the whole screen, or collapse back to the grid |
+| `Ctrl+E`            | Expand the focused panel to fill the whole screen, or collapse back to the grid                                                           |
 
 The `Tab`/`Shift+Tab` cycling order is:
 
 ```
-Process Picker → Scan Panel → Match View → [Cheat View, if built with `cheat-list`] → Hex View → (back to Process Picker)
+Process Picker → Scan Panel → Match View → [Cheat View, if built with `cheat-list`]
+  → [Hex View, if built with `hex-view`] → (back to Process Picker)
 ```
 
 While a panel is expanded (`Ctrl+E`), only it is drawn — the others are hidden until you collapse
@@ -96,23 +102,23 @@ The status bar at the bottom of the screen always shows the currently focused pa
 global bindings.
 
 > Cheat View only appears in the grid and the `Tab` cycle at all when `gameconqueror` is built with
-> `--features cheat-list` (§1); otherwise the grid drops it and `Tab` skips straight from Match
-> View to Hex View.
+> the `cheat-list` feature (§1, on by default); Hex View likewise only appears when built with the
+> (opt-in) `hex-view` feature. `Tab` skips whichever of the two isn't built.
 
 ---
 
 ## 3. Global hotkeys (work in every panel)
 
-| Key                | Action                                                                                           |
-| ------------------ | ------------------------------------------------------------------------------------------------ |
-| `Ctrl` + arrow key | Focus the panel spatially adjacent in that direction on the grid (§2)                            |
-| `Ctrl+E`           | Expand the focused panel fullscreen, or collapse back to the grid                                |
-| `Tab`              | Focus next panel (fixed cycling order, §2)                                                       |
-| `Shift+Tab`        | Focus previous panel                                                                             |
+| Key                | Action                                                                                                                                   |
+| ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `Ctrl` + arrow key | Focus the panel spatially adjacent in that direction on the grid (§2)                                                                    |
+| `Ctrl+E`           | Expand the focused panel fullscreen, or collapse back to the grid                                                                        |
+| `Tab`              | Focus next panel (fixed cycling order, §2)                                                                                               |
+| `Shift+Tab`        | Focus previous panel                                                                                                                     |
 | `?` or `F1`        | Toggle the help overlay for the current panel — lists every binding active for the focused panel, generated straight from `ui/keymap.rs` |
-| `Ctrl+Q`           | Quit                                                                                             |
-| `Ctrl+D`           | Detach from the current process, resuming its execution — no-op if nothing is attached           |
-| `Esc`              | Dismiss — closes the help overlay if open, otherwise cancels an active search/edit and clears it |
+| `Ctrl+Q`           | Quit                                                                                                                                     |
+| `Ctrl+D`           | Detach from the current process, resuming its execution — no-op if nothing is attached                                                   |
+| `Esc`              | Dismiss — closes the help overlay if open, otherwise cancels an active search/edit and clears it                                         |
 
 The status bar also always shows whether a process is currently attached (and its pid/name), regardless of which panel is focused.
 
@@ -151,20 +157,27 @@ driven by keys instead of typed commands.
 | `t` | Cycle the data type (`i8`/`i16`/`i32`/`i64`/`f32`/`f64`/`any`/`anyint`/`anyfloat`/`bytes`/`string`)                              |
 | `m` | Cycle the match type (`=`, `!=`, `>`, `<`, `range`, `update`, `unchanged`, `changed`, `increased`, `decreased`, `+`, `-`, `any`) |
 | `/` | Edit the value/range input                                                                                                       |
-| `s` | Run the scan (first scan or narrowing scan, picked automatically based on whether matches already exist)                         |
-| `n` | Snapshot — reseed the match set with every byte of every considered memory region                                                |
-| `r` | Reset — discard the current match set without detaching                                                                          |
+| `s` | Scan — narrows the current matches against the value/type above if any are already recorded, otherwise scans from scratch        |
+| `n` | New scan — always discards the current matches and scans every considered byte from scratch, even if matches already exist       |
+| `r` | Refresh — re-reads every current match's value in place, without narrowing; never drops a match just because its value changed   |
 
 Match types that take no value (`any`, `update`, `unchanged`, `changed`, `increased`, `decreased`)
 must be run with an empty input; `range` expects two whitespace-separated bounds (`low high`); every
 other match type requires exactly one value.
 
+`s` only ever touches addresses already in the match set once some exist — it narrows, it never
+discovers new addresses. `n` is the way to force a fresh full-region scan (e.g. after changing the
+data type, or to start over with a different value) without first clearing the match set by hand;
+setting the data type to `any` and the match type to `any` before pressing `n` records every byte
+as a candidate, the starting point for an "I don't know the exact value, but I'll watch it change"
+search — then narrow with `increased`/`decreased`/`changed` as usual.
+
 Attaching does not pause the target — it keeps running normally so you can keep playing while you
-search. `s` and `n` run on a background thread and only pause the target for the scan/snapshot
-itself, so the rest of the TUI stays responsive while they work: the Scan Panel shows a live
-progress gauge for the duration (the status bar shows a percentage too, regardless of which panel
-is focused); press `Esc` to cancel early and keep whatever partial matches were found before the
-cancellation took effect.
+search. `s`, `n`, and `r` all run on a background thread and only pause the target for the
+scan/refresh itself, so the rest of the TUI stays responsive while they work: the Scan Panel shows
+a live progress gauge for the duration (the status bar shows a percentage too, regardless of which
+panel is focused); press `Esc` to cancel early and keep whatever partial matches were found before
+the cancellation took effect.
 
 **Example** — find a 32-bit integer currently equal to `100`, then narrow to `95` after it changes
 in-game:
@@ -175,6 +188,10 @@ in-game:
 4. Press `/`, type `100`, press `Enter`.
 5. Press `s` to run the first scan — the status bar reports the match count.
 6. Change the value in the target program, then press `/`, type `95`, `Enter`, `s` again to narrow.
+
+**Example** — check whether a match you found earlier is still holding its value, without
+narrowing anything: focus the Scan Panel and press `r`. The Match View's values update in place;
+the match count never changes from this alone.
 
 ---
 
@@ -192,32 +209,28 @@ there's no separate "apply filter" step.
 As with the Process Picker, `Backspace` edits the filter while active and `Esc` clears it instead
 of keeping it.
 
-| Key | Action                                                       |
-| --- | ------------------------------------------------------------ |
-| `h` | Open the Hex View on the bytes around the selected match      |
+| Key | Action                                                               |
+| --- | -------------------------------------------------------------------- |
+| `h` | Open the Hex View on the bytes around the selected match _(`hex-view` build only)_ |
 | `a` | Add the selected match to the cheat list _(`cheat-list` build only)_ |
 
-> A cheat added via `a` stores only the single raw byte at the match's address (the same value
-> shown in the Value column), not the full width of a multi-byte scan (e.g. an `i32`) — a
-> limitation of the current match-tracking data, not of the cheat list itself. Freezing it still
-> writes exactly that one byte back, so it never corrupts neighboring bytes; it just won't hold a
-> wider value steady on its own. Opening the Hex View with `h` instead lets you edit any byte
-> directly, independent of the match's tracked width.
+> A cheat added via `a` stores the same full-width value shown in the Value column (e.g. an `i32`
+> match records all 4 bytes), not just its first byte — freezing it rewrites that whole width on
+> every tick, so it holds steady without corrupting neighboring bytes.
 
 ---
 
-## 7. Cheat View _(requires the `cheat-list` feature)_
+## 7. Cheat View _(requires the `cheat-list` feature, on by default)_
 
-A table of every recorded cheat: address, description, value, and whether it's frozen. Build with
-`cargo build -p gameconqueror --features cheat-list` to enable it — it then also becomes reachable
-in the `Tab`/`Shift+Tab` focus cycle (§2).
+A table of every recorded cheat: address, description, value, and whether it's frozen. Built by
+default; build with `--no-default-features --features tui` to leave it out instead.
 
-| Key       | Action                                                             |
-| --------- | ------------------------------------------------------------------- |
-| `↑`/`↓` or `k`/`j` | Move the selection                                          |
-| `Space`   | Toggle freeze on the selected cheat                                |
-| `e`       | Edit the selected cheat's value inline (prefilled with its current value; `Enter` confirms, `Esc` cancels) |
-| `h`       | Open the Hex View on the bytes around the selected cheat            |
+| Key                | Action                                                                                                     |
+| ------------------ | ---------------------------------------------------------------------------------------------------------- |
+| `↑`/`↓` or `k`/`j` | Move the selection                                                                                         |
+| `Space`            | Toggle freeze on the selected cheat                                                                        |
+| `e`                | Edit the selected cheat's value inline (prefilled with its current value; `Enter` confirms, `Esc` cancels) |
+| `h`                | Open the Hex View on the bytes around the selected cheat _(`hex-view` build only)_                         |
 
 **Freezing**: while a cheat is frozen, `gameconqueror` rewrites its stored value to its address on
 every idle tick (a few times a second) for as long as the TUI is running and a session stays
@@ -226,10 +239,10 @@ Unfreezing (`Space` again) stops the rewriting; the address is left as last writ
 
 **Global bindings** (work from any panel, not just Cheat View):
 
-| Key      | Action                                                                                     |
-| -------- | -------------------------------------------------------------------------------------------- |
+| Key      | Action                                                                                                                   |
+| -------- | ------------------------------------------------------------------------------------------------------------------------ |
 | `Ctrl+S` | Save the cheat list — writes directly if a path is already known (from a prior save/load), otherwise opens a path prompt |
-| `Ctrl+L` | Load a cheat list — always opens a path prompt, replacing the current cheat list on success   |
+| `Ctrl+L` | Load a cheat list — always opens a path prompt, replacing the current cheat list on success                              |
 
 While a save/load path prompt is open, it captures every key exclusively: type the path, `Enter`
 confirms, `Esc` cancels without saving/loading. The cheat list file is TOML (not the legacy
@@ -248,20 +261,23 @@ schema rationale.
 
 ---
 
-## 8. Hex View
+## 8. Hex View _(requires the `hex-view` feature, off by default)_
 
-A 3-pane offset/hex/ASCII view over a window of bytes around an address. Its grid tile is always
-visible (§2) but empty until you populate it by pressing `h` on a selected row in the Match View
-(§6) or Cheat View (§7).
+A 3-pane offset/hex/ASCII view over a window of bytes around an address — raw byte-level
+inspection/editing independent of the match-tracking system, useful for viewing/editing memory
+context (neighboring fields, struct layout) that the Match/Cheat Views don't show. Build with
+`cargo build -p gameconqueror --features hex-view` to enable it — it then also becomes reachable
+in the `Tab`/`Shift+Tab` focus cycle (§2). Its grid tile is always visible once built, but empty
+until you populate it by pressing `h` on a selected row in the Match View (§6) or Cheat View (§7).
 
-| Key                 | Action                                                              |
-| ------------------- | -------------------------------------------------------------------- |
-| `←`/`→`              | Move the cursor one byte left/right                                 |
-| `↑`/`↓`              | Move the cursor one row (16 bytes) up/down                          |
-| `0`-`9`, `a`-`f`     | Type a hex digit into the byte under the cursor (up to two digits)  |
-| `Backspace`          | Remove the last typed digit                                         |
-| `Enter`              | Write the composed byte to the target's address space               |
-| `Esc`                | Cancel an in-progress byte edit without writing it                  |
+| Key              | Action                                                             |
+| ---------------- | ------------------------------------------------------------------ |
+| `←`/`→`          | Move the cursor one byte left/right                                |
+| `↑`/`↓`          | Move the cursor one row (16 bytes) up/down                         |
+| `0`-`9`, `a`-`f` | Type a hex digit into the byte under the cursor (up to two digits) |
+| `Backspace`      | Remove the last typed digit                                        |
+| `Enter`          | Write the composed byte to the target's address space              |
+| `Esc`            | Cancel an in-progress byte edit without writing it                 |
 
 The cursor doesn't scroll past the loaded window — re-open the Hex View (`h`) from a different row
 to look elsewhere. Composing a byte edit doesn't touch memory until `Enter` commits it; the status

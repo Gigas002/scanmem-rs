@@ -15,8 +15,9 @@ use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
-use gameconqueror::app::{AppState, Focus, Msg, StatusLevel, update};
-#[cfg(feature = "cheat-list")]
+#[cfg(feature = "hex-view")]
+use gameconqueror::app::Focus;
+use gameconqueror::app::{AppState, Msg, StatusLevel, update};
 use libscanmem::scanroutines::{MatchType, ScanDataType};
 #[cfg(feature = "cheat-list")]
 use libscanmem::session::{ScanCriterion, ScanExpr};
@@ -34,8 +35,9 @@ fn fake_target_path() -> PathBuf {
         .join("fake_target")
 }
 
-/// `Msg::RunScan`/`Msg::Snapshot` run on a background thread (so the real TUI never blocks on
-/// one), so unlike every other `Msg` here their result isn't available the instant `update()`
+/// `Msg::RunScan`/`Msg::NewScan`/`Msg::RefreshMatches` run on a background thread (so the real
+/// TUI never blocks on one), so unlike every other `Msg` here their result isn't available the
+/// instant `update()`
 /// returns — dispatch `Msg::PollScan` (what the real event loop does every tick) until
 /// `AppState::is_scanning` clears, standing in for that loop.
 fn wait_for_scan(state: &mut AppState) {
@@ -303,6 +305,123 @@ fn scan_panel_run_scan_first_scan_and_narrow_via_typed_input() {
 
 #[test]
 #[ignore = "requires CAP_SYS_PTRACE; run manually with `--ignored`"]
+fn scan_panel_new_scan_discards_existing_matches_and_rescans_from_scratch() {
+    let mut child = Command::new(fake_target_path())
+        .stdout(Stdio::piped())
+        .spawn()
+        .expect("failed to spawn fake_target");
+
+    let mut stdout = BufReader::new(child.stdout.take().expect("piped stdout"));
+    let mut address_line = String::new();
+    stdout
+        .read_line(&mut address_line)
+        .expect("failed to read address line");
+
+    let mut state = AppState::default();
+    update(&mut state, Msg::Attach(child.id()));
+    assert!(
+        state.session().is_some(),
+        "attach failed: {:?}",
+        state.status()
+    );
+
+    update(&mut state, Msg::SetScanInput("0xdeadbeef".to_owned()));
+    update(&mut state, Msg::RunScan);
+    wait_for_scan(&mut state);
+    let initial_matches = state.filtered_matches().len();
+    assert!(initial_matches >= 1);
+
+    // `Msg::RunScan` with a broad "any" criterion would only narrow these existing matches (and
+    // keep them, since "any" always matches); `Msg::NewScan` must instead discard them and
+    // rescan every byte from scratch, finding far more candidates.
+    while state.scan_data_type() != ScanDataType::Integer8 {
+        update(&mut state, Msg::CycleScanDataType);
+    }
+    while state.scan_match_type() != MatchType::Any {
+        update(&mut state, Msg::CycleScanMatchType);
+    }
+    update(&mut state, Msg::SetScanInput(String::new()));
+    update(&mut state, Msg::NewScan);
+    wait_for_scan(&mut state);
+    assert_eq!(state.status().unwrap().level, StatusLevel::Info);
+    let rescanned = state.filtered_matches().len();
+    assert!(
+        rescanned > initial_matches * 100,
+        "expected NewScan to rescan every byte, not just narrow the previous {initial_matches} \
+         match(es); got {rescanned} match(es)"
+    );
+
+    update(&mut state, Msg::Detach);
+    child.kill().expect("failed to kill fake_target");
+    child.wait().expect("fake_target did not exit cleanly");
+}
+
+#[test]
+#[ignore = "requires CAP_SYS_PTRACE; run manually with `--ignored`"]
+fn scan_panel_refresh_matches_updates_values_without_dropping_any() {
+    let mut child = Command::new(fake_target_path())
+        .arg("ffffffff") // keep the target alive regardless of what this test writes
+        .stdout(Stdio::piped())
+        .spawn()
+        .expect("failed to spawn fake_target");
+
+    let mut stdout = BufReader::new(child.stdout.take().expect("piped stdout"));
+    let mut address_line = String::new();
+    stdout
+        .read_line(&mut address_line)
+        .expect("failed to read address line");
+    let address: usize = address_line
+        .trim()
+        .parse()
+        .expect("fake_target did not print a valid address");
+
+    let mut state = AppState::default();
+    update(&mut state, Msg::Attach(child.id()));
+    assert!(
+        state.session().is_some(),
+        "attach failed: {:?}",
+        state.status()
+    );
+
+    update(&mut state, Msg::SetScanInput("0xdeadbeef".to_owned()));
+    update(&mut state, Msg::RunScan);
+    wait_for_scan(&mut state);
+    let initial_matches = state.filtered_matches().len();
+    assert!(initial_matches >= 1);
+
+    let new_value = 0x1234_5678_u32;
+    update(
+        &mut state,
+        Msg::Write {
+            address,
+            value: Value::U32(new_value),
+        },
+    );
+    assert_eq!(state.status().unwrap().level, StatusLevel::Info);
+
+    update(&mut state, Msg::RefreshMatches);
+    wait_for_scan(&mut state);
+    assert_eq!(state.status().unwrap().level, StatusLevel::Info);
+    let refreshed = state.filtered_matches();
+    assert_eq!(
+        refreshed.len(),
+        initial_matches,
+        "RefreshMatches must never drop a match just because its value changed"
+    );
+    let entry = refreshed
+        .iter()
+        .find(|entry| entry.address == address)
+        .expect("expected the known address to still be a match");
+    assert_eq!(entry.old_value, Value::U32(new_value));
+
+    update(&mut state, Msg::Detach);
+    child.kill().expect("failed to kill fake_target");
+    child.wait().expect("fake_target did not exit cleanly");
+}
+
+#[test]
+#[ignore = "requires CAP_SYS_PTRACE; run manually with `--ignored`"]
+#[cfg(feature = "hex-view")]
 fn hex_view_focus_and_commit_edit_writes_a_single_byte() {
     let mut child = Command::new(fake_target_path())
         .stdout(Stdio::piped())

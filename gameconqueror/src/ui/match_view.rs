@@ -43,6 +43,14 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState, focused: bool) {
     frame.render_stateful_widget(table, area, &mut table_state);
 }
 
+/// Hint for the keys `ui/input.rs` resolves dynamically (need `AppState` to know the selected
+/// row, so they're not in `ui/keymap.rs`'s static tables) — kept alongside the static `o`/`/`
+/// hint below so the title never drifts from what's actually bound.
+#[cfg(feature = "cheat-list")]
+const DYNAMIC_HINT: &str = "h: hex view, a: add cheat";
+#[cfg(not(feature = "cheat-list"))]
+const DYNAMIC_HINT: &str = "h: hex view";
+
 fn title(state: &AppState) -> String {
     let sort = match state.match_sort() {
         MatchSortColumn::Address => "address",
@@ -50,15 +58,17 @@ fn title(state: &AppState) -> String {
     };
 
     if state.search_active() {
-        format!(
+        return format!(
             "Match View — sort: {sort}, search: {}_",
             state.match_filter()
-        )
-    } else if state.match_filter().is_empty() {
-        format!("Match View — sort: {sort} · o: sort, /: filter")
+        );
+    }
+
+    if state.match_filter().is_empty() {
+        format!("Match View — sort: {sort} · o: sort, /: filter, {DYNAMIC_HINT}")
     } else {
         format!(
-            "Match View — sort: {sort}, filter: {}",
+            "Match View — sort: {sort}, filter: {} · {DYNAMIC_HINT}",
             state.match_filter()
         )
     }

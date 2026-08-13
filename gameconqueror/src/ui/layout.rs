@@ -12,7 +12,9 @@ use crate::app::PathPromptKind;
 use crate::app::{AppState, Focus, StatusLevel};
 #[cfg(feature = "cheat-list")]
 use crate::ui::cheat_view;
-use crate::ui::{help_overlay, hex_view, match_view, process_picker, scan_panel};
+#[cfg(feature = "hex-view")]
+use crate::ui::hex_view;
+use crate::ui::{help_overlay, match_view, process_picker, scan_panel};
 
 /// Renders the current frame: either the multi-panel grid or (while `AppState::expanded`) just
 /// the focused panel fullscreen, then a status bar showing the current focus, the last status
@@ -47,22 +49,28 @@ fn render_expanded(frame: &mut Frame, area: Rect, state: &AppState) {
         Focus::MatchView => match_view::render(frame, area, state, true),
         #[cfg(feature = "cheat-list")]
         Focus::CheatView => cheat_view::render(frame, area, state, true),
+        #[cfg(feature = "hex-view")]
         Focus::HexView => hex_view::render(frame, area, state, true),
     }
 }
 
-/// Renders every panel at once into `area`, arranged in a fixed 3-row grid — top row: Process
-/// Picker | Scan Panel; middle row: Match View | Cheat View (or just Match View without the
-/// `cheat-list` feature); bottom row: Hex View, spanning the full width. `Focus::towards` (in
-/// `app/focus.rs`) encodes `Ctrl+<Arrow>` navigation over exactly this arrangement, so changing it
-/// here means updating that too.
+/// Renders every panel at once into `area`, arranged in a fixed grid — top row: Process Picker |
+/// Scan Panel; middle row: Match View | Cheat View (or just Match View without the `cheat-list`
+/// feature); bottom row: Hex View, spanning the full width, if built with the `hex-view` feature
+/// (dropped entirely otherwise, leaving a 2-row grid). `Focus::towards` (in `app/focus.rs`)
+/// encodes `Ctrl+<Arrow>` navigation over exactly this arrangement, so changing it here means
+/// updating that too.
 fn render_grid(frame: &mut Frame, area: Rect, state: &AppState) {
-    let rows = Layout::vertical([
+    #[cfg(feature = "hex-view")]
+    let row_constraints = vec![
         Constraint::Percentage(30),
         Constraint::Percentage(40),
         Constraint::Min(0),
-    ])
-    .split(area);
+    ];
+    #[cfg(not(feature = "hex-view"))]
+    let row_constraints = vec![Constraint::Percentage(30), Constraint::Min(0)];
+
+    let rows = Layout::vertical(row_constraints).split(area);
 
     let top =
         Layout::horizontal([Constraint::Percentage(35), Constraint::Percentage(65)]).split(rows[0]);
@@ -79,6 +87,7 @@ fn render_grid(frame: &mut Frame, area: Rect, state: &AppState) {
     #[cfg(not(feature = "cheat-list"))]
     match_view::render(frame, rows[1], state, state.focus() == Focus::MatchView);
 
+    #[cfg(feature = "hex-view")]
     hex_view::render(frame, rows[2], state, state.focus() == Focus::HexView);
 }
 

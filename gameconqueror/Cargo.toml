@@ -20,6 +20,7 @@ tracing = { workspace = true }
 tracing-subscriber = "0.3"
 
 [features]
-default = ["tui"]
+default = ["tui", "cheat-list"]
 tui = ["dep:ratatui"]
 cheat-list = ["dep:serde", "dep:thiserror", "dep:toml"]
+hex-view = []

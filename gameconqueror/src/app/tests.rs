@@ -37,45 +37,29 @@ fn is_scanning_and_scan_progress_reflect_an_in_progress_scan_job() {
 }
 
 #[test]
-#[cfg(feature = "cheat-list")]
 fn focus_next_and_prev_cycle_through_every_panel() {
-    let mut state = AppState::default();
+    #[allow(unused_mut, clippy::useless_vec)]
+    let mut expected = vec![Focus::ProcessPicker, Focus::ScanPanel, Focus::MatchView];
+    #[cfg(feature = "cheat-list")]
+    expected.push(Focus::CheatView);
+    #[cfg(feature = "hex-view")]
+    expected.push(Focus::HexView);
 
+    let mut state = AppState::default();
+    for &want in &expected[1..] {
+        update(&mut state, Msg::FocusNext);
+        assert_eq!(state.focus(), want);
+    }
+    // Wraps back to the start.
     update(&mut state, Msg::FocusNext);
-    assert_eq!(state.focus(), Focus::ScanPanel);
-    update(&mut state, Msg::FocusNext);
-    assert_eq!(state.focus(), Focus::MatchView);
-    update(&mut state, Msg::FocusNext);
-    assert_eq!(state.focus(), Focus::CheatView);
-    update(&mut state, Msg::FocusNext);
-    assert_eq!(state.focus(), Focus::HexView);
-    update(&mut state, Msg::FocusNext);
-    assert_eq!(state.focus(), Focus::ProcessPicker);
+    assert_eq!(state.focus(), expected[0]);
 
     update(&mut state, Msg::FocusPrev);
-    assert_eq!(state.focus(), Focus::HexView);
+    assert_eq!(state.focus(), *expected.last().unwrap());
 }
 
 #[test]
-#[cfg(not(feature = "cheat-list"))]
-fn focus_next_and_prev_cycle_through_every_panel() {
-    let mut state = AppState::default();
-
-    update(&mut state, Msg::FocusNext);
-    assert_eq!(state.focus(), Focus::ScanPanel);
-    update(&mut state, Msg::FocusNext);
-    assert_eq!(state.focus(), Focus::MatchView);
-    update(&mut state, Msg::FocusNext);
-    assert_eq!(state.focus(), Focus::HexView);
-    update(&mut state, Msg::FocusNext);
-    assert_eq!(state.focus(), Focus::ProcessPicker);
-
-    update(&mut state, Msg::FocusPrev);
-    assert_eq!(state.focus(), Focus::HexView);
-}
-
-#[test]
-#[cfg(feature = "cheat-list")]
+#[cfg(all(feature = "cheat-list", feature = "hex-view"))]
 fn focus_direction_navigates_the_grid_spatially() {
     let mut state = AppState::default();
     assert_eq!(state.focus(), Focus::ProcessPicker);
@@ -96,7 +80,7 @@ fn focus_direction_navigates_the_grid_spatially() {
 }
 
 #[test]
-#[cfg(not(feature = "cheat-list"))]
+#[cfg(all(not(feature = "cheat-list"), feature = "hex-view"))]
 fn focus_direction_navigates_the_grid_spatially() {
     let mut state = AppState::default();
     assert_eq!(state.focus(), Focus::ProcessPicker);
@@ -112,6 +96,42 @@ fn focus_direction_navigates_the_grid_spatially() {
     assert_eq!(state.focus(), Focus::HexView);
     update(&mut state, Msg::FocusDirection(Direction::Up));
     assert_eq!(state.focus(), Focus::MatchView);
+}
+
+#[test]
+#[cfg(all(feature = "cheat-list", not(feature = "hex-view")))]
+fn focus_direction_navigates_the_grid_spatially() {
+    let mut state = AppState::default();
+    assert_eq!(state.focus(), Focus::ProcessPicker);
+
+    update(&mut state, Msg::FocusDirection(Direction::Right));
+    assert_eq!(state.focus(), Focus::ScanPanel);
+    update(&mut state, Msg::FocusDirection(Direction::Down));
+    assert_eq!(state.focus(), Focus::CheatView);
+    update(&mut state, Msg::FocusDirection(Direction::Down));
+    // No panel below Cheat View without hex-view — a no-op.
+    assert_eq!(state.focus(), Focus::CheatView);
+    update(&mut state, Msg::FocusDirection(Direction::Left));
+    assert_eq!(state.focus(), Focus::MatchView);
+    update(&mut state, Msg::FocusDirection(Direction::Up));
+    assert_eq!(state.focus(), Focus::ProcessPicker);
+}
+
+#[test]
+#[cfg(all(not(feature = "cheat-list"), not(feature = "hex-view")))]
+fn focus_direction_navigates_the_grid_spatially() {
+    let mut state = AppState::default();
+    assert_eq!(state.focus(), Focus::ProcessPicker);
+
+    update(&mut state, Msg::FocusDirection(Direction::Right));
+    assert_eq!(state.focus(), Focus::ScanPanel);
+    update(&mut state, Msg::FocusDirection(Direction::Down));
+    assert_eq!(state.focus(), Focus::MatchView);
+    update(&mut state, Msg::FocusDirection(Direction::Down));
+    // No panel below Match View without hex-view — a no-op.
+    assert_eq!(state.focus(), Focus::MatchView);
+    update(&mut state, Msg::FocusDirection(Direction::Up));
+    assert_eq!(state.focus(), Focus::ProcessPicker);
 }
 
 #[test]
@@ -172,13 +192,11 @@ fn operations_that_require_a_session_report_not_attached() {
             match_type: libscanmem::scanroutines::MatchType::Any,
             criterion: libscanmem::session::ScanCriterion::None,
         }),
-        Msg::Snapshot,
-        Msg::ResetScan,
+        Msg::RefreshMatches,
         Msg::Write {
             address: 0x1000,
             value: Value::U32(1),
         },
-        Msg::FocusHexView(0x1000),
     ] {
         let mut state = AppState::default();
 
@@ -188,6 +206,18 @@ fn operations_that_require_a_session_report_not_attached() {
         assert_eq!(status.level, StatusLevel::Error);
         assert!(status.text.contains("no process is attached"));
     }
+}
+
+#[test]
+#[cfg(feature = "hex-view")]
+fn focus_hex_view_without_a_session_reports_not_attached() {
+    let mut state = AppState::default();
+
+    update(&mut state, Msg::FocusHexView(0x1000));
+
+    let status = state.status().expect("expected a status message");
+    assert_eq!(status.level, StatusLevel::Error);
+    assert!(status.text.contains("no process is attached"));
 }
 
 #[test]
@@ -328,6 +358,7 @@ fn focus_display_names_match_the_status_bar_labels() {
     assert_eq!(Focus::MatchView.to_string(), "Match View");
     #[cfg(feature = "cheat-list")]
     assert_eq!(Focus::CheatView.to_string(), "Cheat View");
+    #[cfg(feature = "hex-view")]
     assert_eq!(Focus::HexView.to_string(), "Hex View");
 }
 
@@ -511,6 +542,40 @@ fn run_scan_with_a_valid_value_but_no_session_reports_not_attached() {
     update(&mut state, Msg::SetScanInput("42".to_owned()));
 
     update(&mut state, Msg::RunScan);
+
+    let status = state.status().expect("expected a status message");
+    assert_eq!(status.level, StatusLevel::Error);
+    assert!(status.text.contains("no process is attached"));
+}
+
+#[test]
+fn new_scan_without_a_value_reports_an_error_even_without_a_session() {
+    let mut state = AppState::default();
+
+    update(&mut state, Msg::NewScan);
+
+    let status = state.status().expect("expected a status message");
+    assert_eq!(status.level, StatusLevel::Error);
+    assert!(status.text.contains("requires a value"));
+}
+
+#[test]
+fn new_scan_with_a_valid_value_but_no_session_reports_not_attached() {
+    let mut state = AppState::default();
+    update(&mut state, Msg::SetScanInput("42".to_owned()));
+
+    update(&mut state, Msg::NewScan);
+
+    let status = state.status().expect("expected a status message");
+    assert_eq!(status.level, StatusLevel::Error);
+    assert!(status.text.contains("no process is attached"));
+}
+
+#[test]
+fn refresh_matches_without_a_session_reports_not_attached() {
+    let mut state = AppState::default();
+
+    update(&mut state, Msg::RefreshMatches);
 
     let status = state.status().expect("expected a status message");
     assert_eq!(status.level, StatusLevel::Error);
@@ -801,6 +866,7 @@ fn dismiss_closes_an_open_path_prompt_before_touching_search_state() {
 }
 
 #[test]
+#[cfg(feature = "hex-view")]
 fn move_hex_cursor_is_a_no_op_on_an_empty_buffer() {
     let mut state = AppState::default();
 
@@ -812,6 +878,7 @@ fn move_hex_cursor_is_a_no_op_on_an_empty_buffer() {
 }
 
 #[test]
+#[cfg(feature = "hex-view")]
 fn set_hex_edit_input_replaces_the_value() {
     let mut state = AppState::default();
 
@@ -821,6 +888,7 @@ fn set_hex_edit_input_replaces_the_value() {
 }
 
 #[test]
+#[cfg(feature = "hex-view")]
 fn commit_hex_edit_without_input_reports_an_error() {
     let mut state = AppState::default();
 
@@ -833,6 +901,7 @@ fn commit_hex_edit_without_input_reports_an_error() {
 }
 
 #[test]
+#[cfg(feature = "hex-view")]
 fn commit_hex_edit_with_invalid_hex_reports_an_error() {
     let mut state = AppState::default();
     update(&mut state, Msg::SetHexEditInput("zz".to_owned()));
@@ -845,6 +914,7 @@ fn commit_hex_edit_with_invalid_hex_reports_an_error() {
 }
 
 #[test]
+#[cfg(feature = "hex-view")]
 fn commit_hex_edit_with_valid_hex_but_no_session_reports_not_attached() {
     let mut state = AppState::default();
     update(&mut state, Msg::SetHexEditInput("3f".to_owned()));
@@ -857,6 +927,7 @@ fn commit_hex_edit_with_valid_hex_but_no_session_reports_not_attached() {
 }
 
 #[test]
+#[cfg(feature = "hex-view")]
 fn dismiss_clears_an_in_progress_hex_edit() {
     let mut state = AppState::default();
     while state.focus() != Focus::HexView {

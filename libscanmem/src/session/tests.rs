@@ -229,17 +229,92 @@ fn narrow_swath_drops_a_match_that_no_longer_equals_the_new_criterion() {
 #[test]
 fn session_matches_and_nth_match_read_the_swath_store() {
     let mut session = empty_session();
-    session.matches.add(0x1000, 42, MatchFlags::U32);
-    session.matches.add(0x1001, 0, MatchFlags::empty());
+    session.matches.add(0x1000, 42, MatchFlags::U8);
+    // Far enough away to start its own swath, so it can't be mistaken for a filler byte of the
+    // match above.
+    session.matches.add(0x2000, 0, MatchFlags::empty());
 
     let matches: Vec<MatchView> = session.matches().collect();
     assert_eq!(matches.len(), 1);
     assert_eq!(matches[0].address, 0x1000);
-    assert_eq!(matches[0].old_value, 42);
+    assert_eq!(matches[0].old_value, Value::U8(42));
 
     let first = session.nth_match(0).expect("one match recorded");
     assert_eq!(first.address, 0x1000);
+    assert_eq!(first.old_value, Value::U8(42));
     assert!(session.nth_match(1).is_none());
+}
+
+#[test]
+fn session_matches_reconstructs_the_full_width_value_of_a_multi_byte_match() {
+    // Reproduces the reported bug: an Integer32 EqualTo scan for 54276 (0x0000_d404) must report
+    // the full value, not just its low byte (0x04 = 4).
+    let mut session = empty_session();
+    let expr = ScanExpr {
+        data_type: ScanDataType::Integer32,
+        match_type: MatchType::EqualTo,
+        criterion: ScanCriterion::Value(UserValue::Number(parse_int("54276").unwrap())),
+    };
+    let bytes = 54276i32.to_ne_bytes();
+    for (address, byte, flags) in scan_buffer(0x1000, &bytes, &expr, Endianness::Native) {
+        session.matches.add(address, byte, flags);
+    }
+
+    let matches: Vec<MatchView> = session.matches().collect();
+    assert_eq!(matches.len(), 1);
+    assert_eq!(matches[0].address, 0x1000);
+    assert_eq!(matches[0].old_value, Value::I32(54276));
+
+    let first = session.nth_match(0).expect("one match recorded");
+    assert_eq!(first.old_value, Value::I32(54276));
+}
+
+#[test]
+fn reconstruct_value_prefers_signed_wide_and_float_at_matching_widths() {
+    let bytes = 54276i32.to_ne_bytes();
+    assert_eq!(
+        reconstruct_value(
+            &bytes,
+            MatchFlags::U32 | MatchFlags::S32,
+            Endianness::Native
+        ),
+        Value::I32(54276)
+    );
+
+    let float_bytes = 1.5f64.to_ne_bytes();
+    assert_eq!(
+        reconstruct_value(&float_bytes, MatchFlags::F64, Endianness::Native),
+        Value::F64(1.5)
+    );
+}
+
+#[test]
+fn reconstruct_value_treats_a_multi_byte_all_flags_match_as_raw_bytes() {
+    let bytes = b"hi!!".to_vec();
+    assert_eq!(
+        reconstruct_value(&bytes, MatchFlags::all(), Endianness::Native),
+        Value::Bytes(bytes)
+    );
+}
+
+#[test]
+fn reconstruct_value_treats_a_single_byte_all_flags_candidate_as_signed() {
+    // What a lone `AnyNumber`+`Any` snapshot byte looks like before any narrowing scan — signed
+    // is preferred over unsigned at the same width, same as every other tie.
+    assert_eq!(
+        reconstruct_value(&[7], MatchFlags::all(), Endianness::Native),
+        Value::I8(7)
+    );
+}
+
+#[test]
+fn reconstruct_value_falls_back_to_the_widest_decodable_width_when_flags_overclaim() {
+    // Only reachable via hand-built `SwathEntry`s: flags claim a 4-byte width but only 2 bytes
+    // were actually recorded.
+    assert_eq!(
+        reconstruct_value(&[42, 0], MatchFlags::U32, Endianness::Native),
+        Value::U16(42)
+    );
 }
 
 #[test]

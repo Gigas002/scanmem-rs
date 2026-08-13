@@ -4,9 +4,11 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 #[cfg(feature = "cheat-list")]
 use super::cheat_view;
+#[cfg(feature = "hex-view")]
+use super::hex_view;
 use super::install_panic_hook;
 use super::layout::render;
-use super::{help_overlay, hex_view, input, keymap, match_view, process_picker, scan_panel};
+use super::{help_overlay, input, keymap, match_view, process_picker, scan_panel};
 #[cfg(feature = "cheat-list")]
 use crate::app::PathPromptKind;
 use crate::app::{AppState, Focus, Msg, update};
@@ -87,6 +89,7 @@ fn match_view_renders_without_panicking() {
 }
 
 #[test]
+#[cfg(feature = "hex-view")]
 fn hex_view_renders_without_panicking_on_an_empty_buffer() {
     let backend = TestBackend::new(60, 10);
     let mut terminal = Terminal::new(backend).unwrap();
@@ -111,6 +114,7 @@ fn help_overlay_renders_without_panicking_for_every_focus() {
         Focus::MatchView,
         #[cfg(feature = "cheat-list")]
         Focus::CheatView,
+        #[cfg(feature = "hex-view")]
         Focus::HexView,
     ] {
         terminal
@@ -267,11 +271,11 @@ fn scan_panel_bindings_match_the_documented_table() {
         ),
         (
             KeyEvent::new(KeyCode::Char('n'), KeyModifiers::NONE),
-            Msg::Snapshot,
+            Msg::NewScan,
         ),
         (
             KeyEvent::new(KeyCode::Char('r'), KeyModifiers::NONE),
-            Msg::ResetScan,
+            Msg::RefreshMatches,
         ),
     ];
 
@@ -315,6 +319,7 @@ fn match_view_bindings_match_the_documented_table() {
 }
 
 #[test]
+#[cfg(feature = "hex-view")]
 fn hex_view_bindings_match_the_documented_table() {
     let cases = [
         (
@@ -528,6 +533,7 @@ fn enter_on_the_process_picker_attaches_to_the_selected_process() {
 }
 
 #[test]
+#[cfg(feature = "hex-view")]
 fn h_on_match_view_without_a_session_does_not_focus_the_hex_view() {
     let mut state = AppState::default();
     update(&mut state, Msg::FocusNext);
@@ -543,6 +549,7 @@ fn h_on_match_view_without_a_session_does_not_focus_the_hex_view() {
 }
 
 #[test]
+#[cfg(feature = "hex-view")]
 fn typing_hex_digits_on_the_hex_view_composes_the_byte_edit_and_ignores_non_hex_chars() {
     let mut state = AppState::default();
     while state.focus() != Focus::HexView {
@@ -721,7 +728,7 @@ fn a_on_match_view_without_a_session_does_not_add_a_cheat() {
 }
 
 #[test]
-#[cfg(feature = "cheat-list")]
+#[cfg(all(feature = "cheat-list", feature = "hex-view"))]
 fn h_on_cheat_view_without_a_session_does_not_focus_the_hex_view() {
     let mut state = AppState::default();
     update(
