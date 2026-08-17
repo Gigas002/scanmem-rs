@@ -1,13 +1,13 @@
 //! [`AppState`] — attached session, recorded cheats, and focus/help/quit flags; the
 //! toolkit-independent state the `ui/` shell renders from each frame.
 
+use std::collections::{HashMap, HashSet};
 use std::sync::mpsc;
 
 use libscanmem::error::ScanmemError;
 use libscanmem::interrupt::{ScanProgress, StopFlag};
 use libscanmem::scanroutines::{MatchType, ScanDataType};
 use libscanmem::session::{MatchView, ScanStats, Session};
-#[cfg(feature = "cheat-list")]
 use libscanmem::value::Value;
 use rustix::process::Pid;
 #[cfg(feature = "cheat-list")]
@@ -145,6 +145,15 @@ pub struct AppState {
     pub(super) match_sort: MatchSortColumn,
     pub(super) match_filter: String,
     pub(super) match_selected: usize,
+    /// Every currently tracked match's value as of the most recent scan/refresh — the baseline
+    /// [`Self::match_changed_addresses`] is computed against on the *next* one.
+    pub(super) match_previous_values: HashMap<usize, Value>,
+    /// Addresses whose value differed from [`Self::match_previous_values`] as of the most recent
+    /// scan/refresh — drives Match View's "just changed" highlight. Recomputed (and
+    /// `match_previous_values` updated to the new snapshot) every time a scan/refresh completes;
+    /// an address absent from the *previous* snapshot (a newly discovered match) is never
+    /// considered changed, only one whose value actually differs from what it was last time.
+    pub(super) match_changed_addresses: HashSet<usize>,
     #[cfg(feature = "hex-view")]
     pub(super) hex_buffer: Vec<u8>,
     #[cfg(feature = "hex-view")]
@@ -153,6 +162,10 @@ pub struct AppState {
     pub(super) hex_cursor: usize,
     #[cfg(feature = "hex-view")]
     pub(super) hex_edit_input: String,
+    /// Bytes of session memory loaded into the Hex View on either side of the focused address —
+    /// seeded from `Settings::hex_view_buffer_len` at startup (`app::apply_settings_to_state`).
+    #[cfg(feature = "hex-view")]
+    pub(super) hex_view_buffer_len: usize,
     pub(super) focus: Focus,
     pub(super) expanded: bool,
     pub(super) help_visible: bool,
@@ -190,6 +203,8 @@ impl Default for AppState {
             match_sort: MatchSortColumn::Address,
             match_filter: String::new(),
             match_selected: 0,
+            match_previous_values: HashMap::new(),
+            match_changed_addresses: HashSet::new(),
             #[cfg(feature = "hex-view")]
             hex_buffer: Vec::new(),
             #[cfg(feature = "hex-view")]
@@ -198,6 +213,8 @@ impl Default for AppState {
             hex_cursor: 0,
             #[cfg(feature = "hex-view")]
             hex_edit_input: String::new(),
+            #[cfg(feature = "hex-view")]
+            hex_view_buffer_len: 256,
             focus: Focus::default(),
             expanded: false,
             help_visible: false,
@@ -390,6 +407,14 @@ impl AppState {
         self.filtered_matches().into_iter().nth(self.match_selected)
     }
 
+    /// Whether the match at `address` had a different value on the most recent scan/refresh than
+    /// it did on the one before that — drives Match View's "just changed" highlight. Not `true`
+    /// for a newly discovered match (nothing to compare it against yet), only one that was
+    /// already tracked and whose value actually differs from what it was last time.
+    pub fn match_recently_changed(&self, address: usize) -> bool {
+        self.match_changed_addresses.contains(&address)
+    }
+
     /// The bytes currently loaded into the Hex View, starting at [`Self::hex_base_address`].
     #[cfg(feature = "hex-view")]
     pub fn hex_buffer(&self) -> &[u8] {
@@ -447,6 +472,8 @@ impl AppState {
         session.detach()?;
         self.session = None;
         self.attached = None;
+        self.match_previous_values.clear();
+        self.match_changed_addresses.clear();
         Ok(())
     }
 }

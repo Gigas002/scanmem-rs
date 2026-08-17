@@ -17,6 +17,7 @@ fn default_state_starts_on_process_picker_with_no_status() {
     assert!(state.status().is_none());
     assert!(!state.is_scanning());
     assert_eq!(state.scan_progress(), None);
+    assert!(!state.match_recently_changed(0x1000));
 }
 
 #[test]

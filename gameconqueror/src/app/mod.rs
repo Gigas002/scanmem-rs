@@ -9,6 +9,7 @@ mod msg;
 mod process_list;
 mod state;
 
+use std::collections::{HashMap, HashSet};
 #[cfg(feature = "cheat-list")]
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -37,11 +38,15 @@ pub fn update(state: &mut AppState, msg: Msg) {
     let status = match msg {
         Msg::Attach(pid) => Some(attach(state, pid)),
         Msg::Detach => Some(detach(state)),
-        Msg::Scan(expr) => Some(with_session(state, |session| {
-            session
-                .scan(&expr)
-                .map(|stats| format!("{} match(es)", stats.matches))
-        })),
+        Msg::Scan(expr) => {
+            let status = with_session(state, |session| {
+                session
+                    .scan(&expr)
+                    .map(|stats| format!("{} match(es)", stats.matches))
+            });
+            update_match_change_tracking(state);
+            Some(status)
+        }
         Msg::PollScan => poll_scan(state),
         Msg::Write { address, value } => Some(with_session(state, |session| {
             session.write(address, &value).map(|()| "ok".to_owned())
@@ -245,24 +250,21 @@ fn detach(state: &mut AppState) -> Status {
     }
 }
 
-/// Bytes of session memory loaded into the Hex View on either side of the focused address.
-#[cfg(feature = "hex-view")]
-const HEX_VIEW_BUFFER_LEN: usize = 256;
-
-/// Loads [`HEX_VIEW_BUFFER_LEN`] bytes of session memory centered on `address` into the Hex View
-/// buffer and switches focus to it. Falls back to reading forward from `address` (rather than
-/// centered) if the centered window crosses into unmapped memory, since a match sitting near the
-/// start of its region would otherwise always fail to open.
+/// Loads `state.hex_view_buffer_len` bytes of session memory centered on `address` into the Hex
+/// View buffer and switches focus to it. Falls back to reading forward from `address` (rather
+/// than centered) if the centered window crosses into unmapped memory, since a match sitting
+/// near the start of its region would otherwise always fail to open.
 #[cfg(feature = "hex-view")]
 fn focus_hex_view(state: &mut AppState, address: usize) -> Status {
+    let buffer_len = state.hex_view_buffer_len;
     let Some(session) = state.session.as_mut() else {
         return not_attached(state);
     };
 
-    let centered_base = address.saturating_sub(HEX_VIEW_BUFFER_LEN / 2);
-    let (base, bytes) = match session.read(centered_base, HEX_VIEW_BUFFER_LEN) {
+    let centered_base = address.saturating_sub(buffer_len / 2);
+    let (base, bytes) = match session.read(centered_base, buffer_len) {
         Ok(bytes) => (centered_base, bytes),
-        Err(_) => match session.read(address, HEX_VIEW_BUFFER_LEN) {
+        Err(_) => match session.read(address, buffer_len) {
             Ok(bytes) => (address, bytes),
             Err(err) => return Status::error(err.to_string()),
         },
@@ -703,6 +705,7 @@ fn poll_scan(state: &mut AppState) -> Option<Status> {
             session.resume_after_scan();
             state.scan_job = None;
             state.session = Some(session);
+            update_match_change_tracking(state);
             Some(match result {
                 Ok(stats) => Status::info(format!("{} match(es)", stats.matches)),
                 Err(err) => Status::error(err.to_string()),
@@ -714,6 +717,31 @@ fn poll_scan(state: &mut AppState) -> Option<Status> {
             Some(Status::error("scan thread terminated unexpectedly"))
         }
     }
+}
+
+/// Recomputes `state.match_changed_addresses` by comparing the current session's match values
+/// against `state.match_previous_values` (the snapshot from the *previous* call), then updates
+/// that snapshot to the current values — called once per completed scan/refresh/narrow
+/// (`Msg::Scan`, `poll_scan`'s `Msg::RunScan`/`Msg::NewScan`/`Msg::RefreshMatches` outcomes), never
+/// mid-scan. A no-op if nothing is attached.
+fn update_match_change_tracking(state: &mut AppState) {
+    let Some(session) = state.session.as_ref() else {
+        return;
+    };
+
+    let mut changed = HashSet::new();
+    let mut current = HashMap::new();
+    for entry in session.matches() {
+        if let Some(previous) = state.match_previous_values.get(&entry.address)
+            && *previous != entry.old_value
+        {
+            changed.insert(entry.address);
+        }
+        current.insert(entry.address, entry.old_value);
+    }
+
+    state.match_changed_addresses = changed;
+    state.match_previous_values = current;
 }
 
 /// Builds a `ScanExpr` from the Scan Panel's current data type/match type/free-text input,
@@ -818,25 +846,33 @@ fn cheat_index_out_of_range(index: usize) -> Status {
     Status::error(format!("cheat index {index} is out of range"))
 }
 
-/// Runs the application: attaches to `settings.pid` first if given, then hands off to the
+/// Runs the application: seeds `state`'s Scan Panel defaults (and Hex View buffer length, if
+/// built) from `settings`, attaches to `settings.pid` first if given, then hands off to the
 /// `ratatui` shell.
 #[cfg(feature = "tui")]
 pub fn run(settings: Settings) -> ExitCode {
     let mut state = AppState::default();
-    attach_from_settings(&mut state, &settings);
+    apply_settings_to_state(&mut state, &settings);
     crate::ui::run(&mut state, &settings)
 }
 
 #[cfg(not(feature = "tui"))]
 pub fn run(settings: Settings) -> ExitCode {
     let mut state = AppState::default();
-    attach_from_settings(&mut state, &settings);
+    apply_settings_to_state(&mut state, &settings);
     let _ = state;
     eprintln!("gameconqueror: built without the `tui` feature; nothing to run");
     ExitCode::FAILURE
 }
 
-fn attach_from_settings(state: &mut AppState, settings: &Settings) {
+fn apply_settings_to_state(state: &mut AppState, settings: &Settings) {
+    state.scan_data_type = settings.default_scan_data_type;
+    state.scan_match_type = settings.default_scan_match_type;
+    #[cfg(feature = "hex-view")]
+    {
+        state.hex_view_buffer_len = settings.hex_view_buffer_len;
+    }
+
     if let Some(pid) = settings.pid {
         update(state, Msg::Attach(pid));
     }

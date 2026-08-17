@@ -421,6 +421,71 @@ fn scan_panel_refresh_matches_updates_values_without_dropping_any() {
 
 #[test]
 #[ignore = "requires CAP_SYS_PTRACE; run manually with `--ignored`"]
+fn match_recently_changed_flags_only_the_refresh_that_actually_changed_a_value() {
+    let mut child = Command::new(fake_target_path())
+        .arg("ffffffff") // keep the target alive regardless of what this test writes
+        .stdout(Stdio::piped())
+        .spawn()
+        .expect("failed to spawn fake_target");
+
+    let mut stdout = BufReader::new(child.stdout.take().expect("piped stdout"));
+    let mut address_line = String::new();
+    stdout
+        .read_line(&mut address_line)
+        .expect("failed to read address line");
+    let address: usize = address_line
+        .trim()
+        .parse()
+        .expect("fake_target did not print a valid address");
+
+    let mut state = AppState::default();
+    update(&mut state, Msg::Attach(child.id()));
+    assert!(
+        state.session().is_some(),
+        "attach failed: {:?}",
+        state.status()
+    );
+
+    update(&mut state, Msg::SetScanInput("0xdeadbeef".to_owned()));
+    update(&mut state, Msg::RunScan);
+    wait_for_scan(&mut state);
+    assert!(!state.filtered_matches().is_empty());
+    // Nothing to compare the very first scan's values against yet.
+    assert!(!state.match_recently_changed(address));
+
+    update(&mut state, Msg::RefreshMatches);
+    wait_for_scan(&mut state);
+    // Refreshing without writing anything in between must not flag a change.
+    assert!(!state.match_recently_changed(address));
+
+    update(
+        &mut state,
+        Msg::Write {
+            address,
+            value: Value::U32(0x1234_5678),
+        },
+    );
+    update(&mut state, Msg::RefreshMatches);
+    wait_for_scan(&mut state);
+    assert!(
+        state.match_recently_changed(address),
+        "expected the address whose value just changed to be flagged"
+    );
+
+    update(&mut state, Msg::RefreshMatches);
+    wait_for_scan(&mut state);
+    assert!(
+        !state.match_recently_changed(address),
+        "the flag must only reflect the most recent refresh, not linger across later ones"
+    );
+
+    update(&mut state, Msg::Detach);
+    child.kill().expect("failed to kill fake_target");
+    child.wait().expect("fake_target did not exit cleanly");
+}
+
+#[test]
+#[ignore = "requires CAP_SYS_PTRACE; run manually with `--ignored`"]
 #[cfg(feature = "hex-view")]
 fn hex_view_focus_and_commit_edit_writes_a_single_byte() {
     let mut child = Command::new(fake_target_path())

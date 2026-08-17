@@ -39,15 +39,19 @@ pkexec env TERM="$TERM" ./target/release/gameconqueror
 # GTK app's `org.freedesktop.gameconqueror.policy` file.
 ```
 
-| Flag          | Description                                                                           |
-| ------------- | ------------------------------------------------------------------------------------- |
-| `--pid <PID>` | Attach to this pid immediately on startup, instead of starting on the Process Picker. |
+| Flag             | Description                                                                                                     |
+| ---------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `--pid <PID>`    | Attach to this pid immediately on startup, instead of starting on the Process Picker.                          |
+| `--config <PATH>` | Load settings from this `config.toml` instead of the conventional `$XDG_CONFIG_HOME/gameconqueror/config.toml` (`config` feature only). |
+| `--theme <PATH>`  | Load colors from this `theme.toml` instead of the conventional `$XDG_CONFIG_HOME/gameconqueror/theme.toml` (`config` feature only).     |
 
 Logs are written to a file only (never stdout/stderr, which would corrupt the terminal frame) —
-by default `$TMPDIR/gameconqueror.log` (typically `/tmp/gameconqueror.log`).
+by default `$TMPDIR/gameconqueror.log` (configurable via `config.toml`, see below).
 
 Colors follow the [`NO_COLOR`](https://no-color.org/) convention (same check as `scanmem`'s CLI):
-set `NO_COLOR=1` to fall back to bold/reverse-video styling instead of ANSI colors.
+set `NO_COLOR=1` to fall back to bold/reverse-video styling instead of ANSI colors, regardless of
+what `theme.toml` says. Otherwise, every color gameconqueror uses is customizable — see
+[Configuration and theming](#configuration-and-theming) below.
 
 ### Cargo features
 
@@ -56,6 +60,7 @@ set `NO_COLOR=1` to fall back to bold/reverse-video styling instead of ANSI colo
 | `tui`        | **on**  | The `ratatui`/`crossterm` terminal UI itself. Building without it produces a binary with no UI (see below).                                                                                               |
 | `cheat-list` | **on**  | The Cheat View panel: pinning matches, freezing/rewriting their value continuously, and saving/loading a cheat list to disk.                                                                              |
 | `hex-view`   | **off** | The Hex View panel: raw byte-level inspection/editing of memory around an address, independent of the match-tracking system. Opt-in since most editing goes through the Cheat View once it's enabled.    |
+| `config`     | **on**  | Loading `config.toml`/`theme.toml` (`--config`/`--theme`, or their conventional paths). Without it, gameconqueror runs on built-in defaults only — `cheat-list` pulls this in regardless, since its cheat-list file persistence also needs `serde`/`toml`. |
 
 ```sh
 # default build: process picker, scan panel, match view, cheat list — no hex view
@@ -74,6 +79,41 @@ cargo build -p gameconqueror --all-features
 Building with `--no-default-features` compiles the core state machine only, with no terminal UI at
 all — running that binary just prints a message and exits; it exists so the application core can
 be tested/verified independently of `ratatui`, not as an end-user configuration.
+
+### Configuration and theming
+
+Two independent, optional TOML files (`config` feature, on by default) — general settings and
+colors are deliberately separate files, loaded independently:
+
+| File          | Flag        | Conventional path                          | Contents                                                        |
+| ------------- | ----------- | ------------------------------------------- | ----------------------------------------------------------------|
+| `config.toml` | `--config`  | `$XDG_CONFIG_HOME/gameconqueror/config.toml` | Startup pid, log level/path, poll interval, Hex View buffer size, default scan type/match type. |
+| `theme.toml`  | `--theme`   | `$XDG_CONFIG_HOME/gameconqueror/theme.toml`  | Every customizable color (see below).                           |
+
+Both fall back to `~/.config/gameconqueror/...` if `$XDG_CONFIG_HOME` isn't set. Neither file is
+required — a missing conventional path is normal and silently uses built-in defaults; a missing
+*explicitly requested* path (via `--config`/`--theme`), or a file that exists but fails to parse
+or has an invalid value, is a startup error. Every key in both files is optional — set only what
+you want to change from the default. Fully commented, ready-to-copy examples with every key live
+at [`examples/gameconqueror/config.toml`](../examples/gameconqueror/config.toml) and
+[`examples/gameconqueror/theme.toml`](../examples/gameconqueror/theme.toml).
+
+**`theme.toml`** colors are `ratatui`'s own color syntax: a name (`"cyan"`, `"light red"`, `"dark
+gray"`, ...), `"#rrggbb"` hex, or a `0`-`255` terminal palette index. Every element gameconqueror
+colors is a separate key:
+
+| Key                    | What it colors                                                                    |
+| ----------------------- | ---------------------------------------------------------------------------------- |
+| `focused-border`        | Border of whichever panel currently has focus.                                    |
+| `status-bar-fg`/`-bg`   | Status bar, normal state.                                                         |
+| `status-bar-error-fg`/`-bg` | Status bar while showing an error.                                            |
+| `scan-progress`         | Scan Panel's progress gauge fill.                                                 |
+| `selection`             | Selected row (every table) and the Hex View cursor cell — a background color, replacing the default reverse-video highlight. |
+| `match-changed`         | Match View's value cell for a match whose value changed on the most recent scan/refresh (§6). |
+| `frozen`                | Cheat View's Frozen column for a currently-frozen cheat (§7).                     |
+
+`NO_COLOR=1` overrides every key above with a colorless (bold/reverse-video-only) fallback,
+regardless of what `theme.toml` says.
 
 ---
 
@@ -238,6 +278,13 @@ of keeping it.
 > match records all 4 bytes), not just its first byte — freezing it rewrites that whole width on
 > every tick, so it holds steady without corrupting neighboring bytes.
 
+**Highlighting what just changed**: a match's Value cell is colored (`theme.toml`'s
+`match-changed`, yellow by default) when its value differs from what it was on the *previous*
+scan/refresh — press `r` (Scan Panel, §5) to re-read every current match's value and watch which
+rows light up between presses. A match that's held steady since the last look stays plain; a
+newly discovered match (first scan, or one that only just started matching) is never flagged
+"changed" on the scan that finds it — there's nothing yet to compare it against.
+
 ---
 
 ## 7. Cheat View _(requires the `cheat-list` feature, on by default)_
@@ -255,7 +302,9 @@ default; build with `--no-default-features --features tui` to leave it out inste
 **Freezing**: while a cheat is frozen, `gameconqueror` rewrites its stored value to its address on
 every idle tick (a few times a second) for as long as the TUI is running and a session stays
 attached — so even if the target process (or another tool) overwrites that address, it snaps back.
-Unfreezing (`Space` again) stops the rewriting; the address is left as last written.
+Unfreezing (`Space` again) stops the rewriting; the address is left as last written. The Frozen
+column is colored (`theme.toml`'s `frozen`, magenta by default) for every currently-frozen row, so
+a glance down the column tells you what's actively held steady versus just recorded.
 
 **Global bindings** (work from any panel, not just Cheat View):
 
@@ -320,3 +369,4 @@ bar reports the write's result (or why it failed, e.g. no process attached).
 | Attach *succeeds* without `sudo`, and that's surprising       | Some targets opt themselves out of ptrace restriction entirely, independent of `ptrace_scope` — e.g. Unity's crash handler process registers `prctl(PR_SET_PTRACER, PR_SET_PTRACER_ANY)` so it can attach to its own parent game process, which as a side effect lets *any* same-user process (`gameconqueror` included) attach too. Not a bug in either program — the target voluntarily disabled its own protection. |
 | Terminal looks broken after a crash                          | Shouldn't happen — a panic hook restores the terminal (disables raw mode, leaves the alternate screen) before the default panic message prints. If it does happen anyway, run `reset` in your shell. |
 | Nothing happens when I run the binary                        | Check whether it was built with `--no-default-features` (no `tui` feature) — that build has no terminal UI by design.                                                                                |
+| Exits immediately with a `config.toml`/`theme.toml` error      | The message names the exact key and file — a missing *explicitly requested* `--config`/`--theme` path, a malformed TOML file, or a value gameconqueror doesn't recognize (e.g. a typo'd color name or scan type) all fail fast at startup rather than falling back silently. A missing *conventional* path (no `--config`/`--theme` given) is never the cause — that's normal and just uses defaults. |

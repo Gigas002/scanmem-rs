@@ -4,8 +4,12 @@
 
 pub mod app;
 pub mod cli;
+#[cfg(feature = "config")]
+pub mod config;
 pub mod logger;
 pub mod settings;
+#[cfg(feature = "config")]
+pub mod theme;
 
 #[cfg(feature = "tui")]
 pub mod ui;

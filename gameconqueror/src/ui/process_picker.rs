@@ -7,6 +7,7 @@ use ratatui::widgets::{Block, Borders, Cell, Row, Table, TableState};
 
 use crate::app::AppState;
 use crate::ui::panel_border_style;
+use crate::ui::theme::theme;
 
 /// Renders the process table into `area`: one row per pid/name pair passing the current filter,
 /// with the selected row highlighted and the title showing the active filter or search prompt.
@@ -24,7 +25,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState, focused: bool) {
     let widths = [Constraint::Length(8), Constraint::Min(0)];
     let table = Table::new(rows, widths)
         .header(Row::new(["PID", "Name"]).style(Style::default().add_modifier(Modifier::BOLD)))
-        .row_highlight_style(Style::default().add_modifier(Modifier::REVERSED))
+        .row_highlight_style(theme().selection)
         .block(
             Block::default()
                 .borders(Borders::ALL)

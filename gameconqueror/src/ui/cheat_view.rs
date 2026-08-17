@@ -9,19 +9,26 @@ use ratatui::widgets::{Block, Borders, Cell, Row, Table, TableState};
 
 use crate::app::AppState;
 use crate::ui::panel_border_style;
+use crate::ui::theme::theme;
 
 /// Renders the cheat table into `area`: one row per recorded cheat, with the selected row
-/// highlighted and the title showing an in-progress value edit, if any. `focused` highlights the
-/// panel border when it's the grid's (or expanded view's) current focus.
+/// highlighted, a currently-frozen cheat's Frozen cell styled with `theme().frozen`, and the
+/// title showing an in-progress value edit, if any. `focused` highlights the panel border when
+/// it's the grid's (or expanded view's) current focus.
 pub fn render(frame: &mut Frame, area: Rect, state: &AppState, focused: bool) {
     let cheats = state.cheats();
 
     let rows = cheats.iter().map(|entry| {
+        let frozen_style = if entry.frozen {
+            theme().frozen
+        } else {
+            Style::default()
+        };
         Row::new([
             Cell::new(format!("{:#x}", entry.address)),
             Cell::new(entry.description.clone()),
             Cell::new(entry.value.to_string()),
-            Cell::new(if entry.frozen { "yes" } else { "" }),
+            Cell::new(if entry.frozen { "yes" } else { "" }).style(frozen_style),
         ])
     });
 
@@ -36,7 +43,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState, focused: bool) {
             Row::new(["Address", "Description", "Value", "Frozen"])
                 .style(Style::default().add_modifier(Modifier::BOLD)),
         )
-        .row_highlight_style(Style::default().add_modifier(Modifier::REVERSED))
+        .row_highlight_style(theme().selection)
         .block(
             Block::default()
                 .borders(Borders::ALL)

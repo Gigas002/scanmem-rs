@@ -7,7 +7,13 @@ use gameconqueror::{app, cli, logger, settings};
 
 fn main() -> ExitCode {
     let args = cli::CliArgs::parse();
-    let settings = settings::resolve(&args);
+    let settings = match settings::resolve(&args) {
+        Ok(settings) => settings,
+        Err(err) => {
+            eprintln!("gameconqueror: {err}");
+            return ExitCode::FAILURE;
+        }
+    };
 
     logger::init(&settings);
     app::run(settings)

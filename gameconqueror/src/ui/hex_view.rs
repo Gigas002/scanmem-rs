@@ -10,6 +10,7 @@ use ratatui::widgets::{Block, Borders, Cell, Row, Table};
 
 use crate::app::AppState;
 use crate::ui::panel_border_style;
+use crate::ui::theme::theme;
 
 /// Bytes shown per row; also the byte distance `ui/keymap.rs` moves the cursor on `Up`/`Down`.
 pub const BYTES_PER_ROW: usize = 16;
@@ -36,7 +37,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState, focused: bool) {
                 let index = row_start + column;
                 let is_cursor = index == cursor;
                 let style = if is_cursor {
-                    Style::default().add_modifier(Modifier::REVERSED)
+                    theme().selection
                 } else {
                     Style::default()
                 };

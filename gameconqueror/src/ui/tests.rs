@@ -8,7 +8,7 @@ use super::cheat_view;
 use super::hex_view;
 use super::install_panic_hook;
 use super::layout::render;
-use super::{help_overlay, input, keymap, match_view, process_picker, scan_panel};
+use super::{help_overlay, input, keymap, match_view, process_picker, scan_panel, theme};
 #[cfg(feature = "cheat-list")]
 use crate::app::PathPromptKind;
 use crate::app::{AppState, Focus, Msg, update};
@@ -769,4 +769,122 @@ fn path_prompt_key_composes_input_and_confirms_on_enter() {
 
     assert!(state.path_prompt().is_none());
     assert_eq!(state.path_input(), "");
+}
+
+#[test]
+fn theme_default_matches_the_documented_colors() {
+    use ratatui::style::{Color, Modifier};
+
+    let default = theme::Theme::default();
+    assert_eq!(default.focused_border.fg, Some(Color::Cyan));
+    assert!(default.focused_border.add_modifier.contains(Modifier::BOLD));
+    assert_eq!(default.status_bar.fg, Some(Color::Black));
+    assert_eq!(default.status_bar.bg, Some(Color::Gray));
+    assert_eq!(default.status_bar_error.fg, Some(Color::White));
+    assert_eq!(default.status_bar_error.bg, Some(Color::Red));
+    assert_eq!(default.scan_progress.fg, Some(Color::Cyan));
+    assert!(default.selection.add_modifier.contains(Modifier::REVERSED));
+    assert_eq!(default.match_changed.fg, Some(Color::Yellow));
+    assert_eq!(default.frozen.fg, Some(Color::Blue));
+}
+
+#[test]
+#[cfg(feature = "config")]
+fn theme_resolve_applies_file_overrides_over_the_defaults() {
+    use ratatui::style::Color;
+
+    use crate::theme::FileTheme;
+
+    let file = FileTheme {
+        focused_border: Some("magenta".to_owned()),
+        match_changed: Some("#ff8800".to_owned()),
+        ..FileTheme::default()
+    };
+
+    // `resolve_with_color(.., true)` rather than `resolve` — deterministic regardless of whether
+    // this test process's stdout happens to be a real terminal (`resolve` itself checks that live
+    // via `color_enabled`).
+    let resolved =
+        theme::Theme::resolve_with_color(Some(&file), true).expect("valid colors should resolve");
+
+    assert_eq!(resolved.focused_border.fg, Some(Color::Magenta));
+    assert_eq!(
+        resolved.match_changed.fg,
+        Some(Color::Rgb(0xff, 0x88, 0x00))
+    );
+    // Untouched fields keep their default.
+    assert_eq!(resolved.status_bar.fg, Some(Color::Black));
+}
+
+#[test]
+#[cfg(feature = "config")]
+fn theme_resolve_rejects_an_invalid_color() {
+    use crate::theme::FileTheme;
+
+    let file = FileTheme {
+        focused_border: Some("not-a-real-color".to_owned()),
+        ..FileTheme::default()
+    };
+
+    let err = theme::Theme::resolve_with_color(Some(&file), true)
+        .expect_err("an invalid color must be rejected");
+    assert!(err.to_string().contains("focused-border"));
+}
+
+#[test]
+#[cfg(feature = "config")]
+fn theme_resolve_with_no_file_and_color_returns_defaults() {
+    let resolved = theme::Theme::resolve_with_color(None, true).expect("no file is always valid");
+    assert_eq!(resolved, theme::Theme::default());
+}
+
+#[test]
+#[cfg(feature = "config")]
+fn theme_resolve_without_color_strips_every_color_but_keeps_modifiers() {
+    let resolved = theme::Theme::resolve_with_color(None, false).expect("always valid");
+
+    assert_eq!(resolved.focused_border.fg, None);
+    assert_eq!(resolved.status_bar.fg, None);
+    assert_eq!(resolved.status_bar.bg, None);
+    assert_eq!(resolved.match_changed.fg, None);
+    // Structural modifiers survive, including the fallback added for styles that would
+    // otherwise become visually blank without a color.
+    assert!(
+        resolved
+            .status_bar_error
+            .add_modifier
+            .contains(ratatui::style::Modifier::REVERSED)
+    );
+    assert!(
+        resolved
+            .scan_progress
+            .add_modifier
+            .contains(ratatui::style::Modifier::REVERSED)
+    );
+    assert!(
+        resolved
+            .match_changed
+            .add_modifier
+            .contains(ratatui::style::Modifier::BOLD)
+    );
+}
+
+#[test]
+#[cfg(not(feature = "config"))]
+fn theme_resolve_with_color_true_and_false_without_config_feature() {
+    let colored = theme::Theme::resolve_with_color(true);
+    assert_eq!(colored, theme::Theme::default());
+
+    let plain = theme::Theme::resolve_with_color(false);
+    assert_eq!(plain.focused_border.fg, None);
+}
+
+#[test]
+fn theme_resolve_does_not_panic_regardless_of_the_live_terminal_state() {
+    // Smoke test for the real entry point (env/terminal-dependent, so no color assertions here —
+    // see the `_with_color` tests above for deterministic coverage of both branches).
+    #[cfg(feature = "config")]
+    theme::Theme::resolve(None).expect("no file is always valid");
+    #[cfg(not(feature = "config"))]
+    theme::Theme::resolve().expect("always valid");
 }

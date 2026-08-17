@@ -2,7 +2,6 @@
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::style::{Color, Modifier, Style};
 use ratatui::widgets::Paragraph;
 #[cfg(feature = "cheat-list")]
 use ratatui::widgets::{Block, Borders, Clear};
@@ -113,21 +112,12 @@ fn status_bar(state: &AppState) -> Paragraph<'_> {
         state.focus(),
         scan_label.unwrap_or_default(),
     );
-    let color = crate::ui::color_enabled();
-    let mut style = if color {
-        Style::default().fg(Color::Black).bg(Color::Gray)
-    } else {
-        Style::default().add_modifier(Modifier::REVERSED)
-    };
+    let mut style = crate::ui::theme::theme().status_bar;
 
     if let Some(status) = state.status() {
         text = format!("{text} — {}", status.text);
         if status.level == StatusLevel::Error {
-            style = if color {
-                Style::default().fg(Color::White).bg(Color::Red)
-            } else {
-                Style::default().add_modifier(Modifier::REVERSED | Modifier::BOLD)
-            };
+            style = crate::ui::theme::theme().status_bar_error;
         }
     }
 

@@ -1,0 +1,44 @@
+# gameconqueror theme.toml — every key here is optional; a key you leave out keeps its built-in
+# default. Load explicitly with `--theme path/to/theme.toml`, or drop this file at the
+# conventional location:
+#   $XDG_CONFIG_HOME/gameconqueror/theme.toml
+#   (falls back to ~/.config/gameconqueror/theme.toml if XDG_CONFIG_HOME isn't set)
+#
+# Every value is a color, in any of these forms:
+#   - a name: "black", "red", "green", "yellow", "blue", "magenta", "cyan", "gray", "dark gray",
+#     "light red", "light green", "light yellow", "light blue", "light magenta", "light cyan",
+#     "white"
+#   - "#rrggbb" hex, e.g. "#ff8800"
+#   - a terminal palette index, 0-255, e.g. "208"
+#
+# `NO_COLOR=1` (https://no-color.org/) overrides everything below with a colorless fallback
+# (bold/reverse-video only) — this file only controls color choice when color is on at all.
+
+# Border of whichever panel currently has focus — the main "where am I" cue in the grid.
+focused-border = "cyan"
+
+# Status bar (bottom line), normal (non-error) state.
+status-bar-fg = "black"
+status-bar-bg = "gray"
+
+# Status bar while showing an error status (a failed scan, write, attach, ...).
+status-bar-error-fg = "white"
+status-bar-error-bg = "red"
+
+# Scan Panel's progress gauge fill, shown while a scan/refresh runs in the background.
+scan-progress = "green"
+
+# Selected row, in every table (Process Picker, Match View, Cheat View) and the Hex View's
+# cursor cell. Unlike the other keys, this one is a background — it replaces the default
+# reverse-video highlight outright.
+selection = "blue"
+
+# Match View's value cell for a match whose value changed on the most recent scan/refresh —
+# everything else stays plain, so a value that just moved is the one that visually pops. This is
+# the "which of these did I just narrow past" cue: press `r` (refresh) repeatedly while poking
+# the target and watch which rows light up.
+match-changed = "yellow"
+
+# Cheat View's Frozen column for a currently-frozen cheat, so a glance down the column tells you
+# what's actively being held steady versus just recorded.
+frozen = "magenta"

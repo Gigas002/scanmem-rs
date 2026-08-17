@@ -9,25 +9,34 @@ use ratatui::widgets::{Block, Borders, Cell, Row, Table, TableState};
 
 use crate::app::{AppState, MatchSortColumn};
 use crate::ui::panel_border_style;
+use crate::ui::theme::theme;
 
 /// Renders the match table into `area`: one row per recorded match passing the current filter,
 /// with the selected row highlighted and the title showing the active sort column and
-/// filter/search prompt. `focused` highlights the panel border when it's the grid's (or expanded
-/// view's) current focus.
+/// filter/search prompt. A match whose value changed on the most recent scan/refresh
+/// (`AppState::match_recently_changed`) gets its value cell styled with `theme().match_changed`;
+/// every other value cell is plain, so a value that just moved is the one that visually stands
+/// out. `focused` highlights the panel border when it's the grid's (or expanded view's) current
+/// focus.
 pub fn render(frame: &mut Frame, area: Rect, state: &AppState, focused: bool) {
     let matches = state.filtered_matches();
 
     let rows = matches.iter().map(|entry| {
+        let value_style = if state.match_recently_changed(entry.address) {
+            theme().match_changed
+        } else {
+            Style::default()
+        };
         Row::new([
             Cell::new(format!("{:#x}", entry.address)),
-            Cell::new(entry.old_value.to_string()),
+            Cell::new(entry.old_value.to_string()).style(value_style),
         ])
     });
 
     let widths = [Constraint::Length(18), Constraint::Min(0)];
     let table = Table::new(rows, widths)
         .header(Row::new(["Address", "Value"]).style(Style::default().add_modifier(Modifier::BOLD)))
-        .row_highlight_style(Style::default().add_modifier(Modifier::REVERSED))
+        .row_highlight_style(theme().selection)
         .block(
             Block::default()
                 .borders(Borders::ALL)

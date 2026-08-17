@@ -1,0 +1,37 @@
+# gameconqueror config.toml — every key here is optional; a key you leave out keeps its built-in
+# default. Load explicitly with `--config path/to/config.toml`, or drop this file (renamed without
+# comments if you like) at the conventional location:
+#   $XDG_CONFIG_HOME/gameconqueror/config.toml
+#   (falls back to ~/.config/gameconqueror/config.toml if XDG_CONFIG_HOME isn't set)
+#
+# Precedence is fixed: CLI flags > this file > built-in defaults.
+
+# Attach to this pid immediately on startup, same as `--pid`. A CLI `--pid` overrides this.
+# pid = 12345
+
+# `tracing` level filter for the log file. One of: trace, debug, info, warn, error, off.
+# Default: warn
+log-level = "warn"
+
+# Where the file-only log sink writes to. Default: $TMPDIR/gameconqueror.log (usually
+# /tmp/gameconqueror.log).
+# log-file = "/tmp/gameconqueror.log"
+
+# How often (in milliseconds) the event loop wakes up with no key pressed — rewrites frozen
+# cheats and polls a background scan's progress. Lower is more responsive (smoother progress
+# gauge, snappier frozen-cheat rewrites); higher uses less CPU while idle. Default: 100
+poll-interval-ms = 100
+
+# Bytes of session memory loaded into the Hex View on either side of the address you open it at.
+# Only meaningful when built with the `hex-view` feature — harmless (ignored) otherwise, so this
+# file works unchanged across every build. Default: 256
+hex-view-buffer-len = 256
+
+# Scan Panel's data type on startup, so you don't have to press `t` to cycle to your usual type
+# every launch. One of: i8, i16, i32, i64, f32, f64, any, anyint, anyfloat, bytes, string.
+# Default: i32
+default-scan-data-type = "i32"
+
+# Scan Panel's match type on startup. One of: =, !=, >, <, range, update, unchanged, changed,
+# increased, decreased, +, -, any. Default: =
+default-scan-match-type = "="

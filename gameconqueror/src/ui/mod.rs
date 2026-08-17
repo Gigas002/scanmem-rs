@@ -12,8 +12,9 @@ mod layout;
 mod match_view;
 mod process_picker;
 mod scan_panel;
+mod theme;
 
-use std::io::{self, IsTerminal};
+use std::io;
 use std::process::ExitCode;
 use std::time::Duration;
 
@@ -24,33 +25,20 @@ use ratatui::crossterm::execute;
 use ratatui::crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::Style;
 
 use crate::app::{AppState, Msg};
 use crate::settings::Settings;
 
-/// Whether `ui/` should use ANSI colors, honoring `NO_COLOR` — the same convention (and the same
-/// `NO_COLOR`-then-`IsTerminal` check) as `scanmem`'s CLI `commands::formatter::color_enabled`,
-/// reused here rather than inventing a second color-detection policy. `stdout` is the relevant
-/// stream since that's what `CrosstermBackend` renders to (see [`run_event_loop`]).
-pub(crate) fn color_enabled() -> bool {
-    std::env::var_os("NO_COLOR").is_none() && io::stdout().is_terminal()
-}
-
-/// The border style every panel renderer applies to its `Block`: highlighted when `focused` (the
-/// grid's currently focused tile, or the sole panel shown while expanded), plain otherwise — the
-/// only visual cue distinguishing panels in the always-visible grid `ui/layout.rs` renders. Falls
-/// back to a modifier-only highlight (no `Color`) when [`color_enabled`] is `false`.
+/// The border style every panel renderer applies to its `Block`: [`theme::theme`]'s
+/// `focused_border` when `focused` (the grid's currently focused tile, or the sole panel shown
+/// while expanded), plain otherwise — the only visual cue distinguishing panels in the
+/// always-visible grid `ui/layout.rs` renders.
 pub(crate) fn panel_border_style(focused: bool) -> Style {
-    if !focused {
-        return Style::default();
-    }
-    if color_enabled() {
-        Style::default()
-            .fg(Color::Cyan)
-            .add_modifier(Modifier::BOLD)
+    if focused {
+        theme::theme().focused_border
     } else {
-        Style::default().add_modifier(Modifier::BOLD)
+        Style::default()
     }
 }
 
@@ -86,9 +74,20 @@ fn install_panic_hook() {
 
 /// Runs the `ratatui` shell: process picker, status bar, quitting cleanly on `Ctrl+Q`.
 pub fn run(state: &mut AppState, settings: &Settings) -> ExitCode {
-    let _ = settings;
     install_panic_hook();
     crate::app::update(state, Msg::RefreshProcessList);
+
+    #[cfg(feature = "config")]
+    let resolved_theme = theme::Theme::resolve(Some(&settings.theme));
+    #[cfg(not(feature = "config"))]
+    let resolved_theme = theme::Theme::resolve();
+    match resolved_theme {
+        Ok(resolved) => theme::init(resolved),
+        Err(err) => {
+            eprintln!("gameconqueror: {err}");
+            return ExitCode::FAILURE;
+        }
+    }
 
     let guard = match TerminalGuard::enter() {
         Ok(guard) => guard,
@@ -98,7 +97,8 @@ pub fn run(state: &mut AppState, settings: &Settings) -> ExitCode {
         }
     };
 
-    let result = run_event_loop(state);
+    let poll_interval = Duration::from_millis(settings.poll_interval_ms);
+    let result = run_event_loop(state, poll_interval);
     drop(guard);
 
     match result {
@@ -110,21 +110,14 @@ pub fn run(state: &mut AppState, settings: &Settings) -> ExitCode {
     }
 }
 
-/// How often the event loop wakes up when no key was pressed, to rewrite frozen cheat-list
-/// entries (with the `cheat-list` feature) and to keep redrawing/polling a background scan's
-/// progress and completion (`Msg::PollScan`) — without this, a scan running via `Msg::RunScan`
-/// would only be checked on the next keypress, defeating the point of it running off the main
-/// thread in the first place.
-const POLL_INTERVAL: Duration = Duration::from_millis(100);
-
-fn run_event_loop(state: &mut AppState) -> io::Result<()> {
+fn run_event_loop(state: &mut AppState, poll_interval: Duration) -> io::Result<()> {
     let backend = CrosstermBackend::new(io::stdout());
     let mut terminal = Terminal::new(backend)?;
 
     loop {
         terminal.draw(|frame| layout::render(frame, state))?;
 
-        if event::poll(POLL_INTERVAL)? {
+        if event::poll(poll_interval)? {
             if let Event::Key(key) = event::read()? {
                 input::handle_key(state, key);
             }

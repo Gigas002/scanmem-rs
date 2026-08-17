@@ -18,3 +18,23 @@ fn defaults_are_empty() {
 fn rejects_unknown_flags() {
     assert!(CliArgs::try_parse_from(["gameconqueror", "--bogus"]).is_err());
 }
+
+#[test]
+#[cfg(feature = "config")]
+fn parses_config_and_theme_paths() {
+    let args = CliArgs::parse_from([
+        "gameconqueror",
+        "--config",
+        "/tmp/config.toml",
+        "--theme",
+        "/tmp/theme.toml",
+    ]);
+    assert_eq!(
+        args.config,
+        Some(std::path::PathBuf::from("/tmp/config.toml"))
+    );
+    assert_eq!(
+        args.theme,
+        Some(std::path::PathBuf::from("/tmp/theme.toml"))
+    );
+}
