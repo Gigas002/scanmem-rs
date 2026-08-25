@@ -7,7 +7,7 @@ use crate::interrupt::{ScanProgress, StopFlag};
 use crate::maps::Region;
 use crate::process::Process;
 use crate::scanroutines::{self, Endianness, MatchType, ScanDataType};
-use crate::swath::{Swath, SwathStore};
+use crate::swath::{Swath, SwathEntry, SwathStore};
 use crate::value::{ByteOrWildcard, MatchFlags, NumberValue, UserValue, Value};
 
 /// A comparison value for a [`ScanExpr`].
@@ -55,6 +55,18 @@ impl ScanExpr {
         match &self.criterion {
             ScanCriterion::Value(UserValue::Str(pattern)) => Some(pattern),
             _ => None,
+        }
+    }
+
+    /// The widest a single match against this expression can be — 8 for every numeric type
+    /// (`i64`/`f64`), or the pattern's own length for `ByteArray`/`String`. Used to size the
+    /// overlap between chunked region reads in [`scan_region_chunked`] so a match starting near a
+    /// chunk boundary is never split across two reads.
+    fn max_match_width(&self) -> usize {
+        match self.data_type {
+            ScanDataType::ByteArray => self.bytes_pattern().map_or(8, <[_]>::len),
+            ScanDataType::String => self.string_pattern().map_or(8, str::len),
+            _ => 8,
         }
     }
 }
@@ -261,21 +273,32 @@ impl Session {
         );
 
         let mut store = SwathStore::new();
-        for swath in old_swaths.swaths() {
-            if self.stop_flag.requested() {
-                break;
+        let process = self.process()?;
+        'swaths: for swath in old_swaths.swaths() {
+            // Chunked (see `scan_region_chunked`'s docs for why) — a swath built from a broad
+            // snapshot can span an entire region, several GB in the worst case. No group
+            // alignment is needed here, unlike `narrow_scan`: every byte's flags are already
+            // fixed by the previous scan, so a chunk boundary can fall anywhere without losing
+            // anything.
+            let mut offset = 0usize;
+            while offset < swath.entries.len() {
+                if self.stop_flag.requested() {
+                    break 'swaths;
+                }
+                let chunk_len = SCAN_CHUNK_LEN.min(swath.entries.len() - offset);
+                let chunk_start = swath.address_of(offset);
+                if let Ok(fresh) = process.read(chunk_start, chunk_len) {
+                    for (index, &byte) in fresh.iter().enumerate() {
+                        store.add(
+                            chunk_start + index,
+                            byte,
+                            swath.entries[offset + index].flags,
+                        );
+                    }
+                }
+                self.progress.add(chunk_len);
+                offset += chunk_len;
             }
-            let Ok(fresh) = self
-                .process()?
-                .read(swath.first_byte_in_child, swath.entries.len())
-            else {
-                self.progress.add(swath.entries.len());
-                continue;
-            };
-            for (index, &byte) in fresh.iter().enumerate() {
-                store.add(swath.address_of(index), byte, swath.entries[index].flags);
-            }
-            self.progress.add(swath.entries.len());
         }
 
         self.matches = store;
@@ -372,18 +395,20 @@ impl Session {
         self.progress.reset(regions.iter().map(Region::size).sum());
 
         let mut store = SwathStore::new();
+        let process = self.process()?;
         for region in &regions {
-            if self.stop_flag.requested() {
+            let finished = scan_region_chunked(
+                process,
+                region,
+                expr,
+                endianness,
+                &self.stop_flag,
+                &self.progress,
+                &mut store,
+            );
+            if !finished {
                 break;
             }
-            let Ok(bytes) = self.process()?.read(region.start, region.size()) else {
-                self.progress.add(region.size());
-                continue;
-            };
-            for (address, byte, flags) in scan_buffer(region.start, &bytes, expr, endianness) {
-                store.add(address, byte, flags);
-            }
-            self.progress.add(region.size());
         }
 
         self.matches = store;
@@ -406,21 +431,30 @@ impl Session {
         );
 
         let mut store = SwathStore::new();
-        for swath in old_swaths.swaths() {
-            if self.stop_flag.requested() {
-                break;
+        let process = self.process()?;
+        'swaths: for swath in old_swaths.swaths() {
+            // Chunked in whole match groups (see `batch_entries_end`) rather than read/tested in
+            // one call — after a broad snapshot, a single swath can be as large as an entire
+            // region, several GB in the worst case.
+            let mut batch_start = 0usize;
+            while batch_start < swath.entries.len() {
+                if self.stop_flag.requested() {
+                    break 'swaths;
+                }
+                let batch_end = batch_entries_end(&swath.entries, batch_start, SCAN_CHUNK_LEN);
+                let batch = Swath {
+                    first_byte_in_child: swath.address_of(batch_start),
+                    entries: swath.entries[batch_start..batch_end].to_vec(),
+                };
+                let len = batch.entries.len();
+                if let Ok(fresh) = process.read(batch.first_byte_in_child, len) {
+                    for (address, byte, flags) in narrow_swath(&batch, &fresh, expr, endianness) {
+                        store.add(address, byte, flags);
+                    }
+                }
+                self.progress.add(len);
+                batch_start = batch_end;
             }
-            let Ok(fresh) = self
-                .process()?
-                .read(swath.first_byte_in_child, swath.entries.len())
-            else {
-                self.progress.add(swath.entries.len());
-                continue;
-            };
-            for (address, byte, flags) in narrow_swath(swath, &fresh, expr, endianness) {
-                store.add(address, byte, flags);
-            }
-            self.progress.add(swath.entries.len());
         }
 
         self.matches = store;
@@ -428,6 +462,82 @@ impl Session {
             matches: self.matches.match_count(),
         })
     }
+}
+
+/// Bytes read per chunk while scanning a region/swath, rather than in one allocation covering the
+/// whole thing — a single region (or, after a broad snapshot, a single swath) can span several GB
+/// as one contiguous run (e.g. a large game's heap), and without chunking neither the peak memory
+/// used nor how promptly [`StopFlag::request`] takes effect is bounded by anything but that size.
+/// Deliberately not configurable: it only trades off syscall count against peak memory/stop
+/// latency, and 4 MiB is a reasonable point on that curve for either.
+const SCAN_CHUNK_LEN: usize = 4 * 1024 * 1024;
+
+/// Scans one region in bounded-size, overlapping chunks (see [`SCAN_CHUNK_LEN`]) instead of
+/// reading/scanning it in a single allocation. Each chunk's read extends [`ScanExpr::max_match_width`]
+/// `- 1` bytes past its own share of the region so a match starting right at the boundary is still
+/// fully visible; [`scan_buffer_chunk`]'s `keep_before` then excludes that overlap tail from the
+/// results (it belongs to, and gets rescanned as part of, the next chunk) so nothing is reported
+/// twice. Returns `false` if `stop_flag` was set partway through (matches found so far are still
+/// kept), `true` if the whole region was scanned.
+fn scan_region_chunked(
+    process: &Process,
+    region: &Region,
+    expr: &ScanExpr,
+    endianness: Endianness,
+    stop_flag: &StopFlag,
+    progress: &ScanProgress,
+    store: &mut SwathStore,
+) -> bool {
+    let overlap = expr.max_match_width().saturating_sub(1);
+    let mut offset = 0usize;
+    while offset < region.size() {
+        if stop_flag.requested() {
+            return false;
+        }
+        let chunk_len = SCAN_CHUNK_LEN.min(region.size() - offset);
+        let read_len = (chunk_len + overlap).min(region.size() - offset);
+        let chunk_start = region.start + offset;
+
+        if let Ok(bytes) = process.read(chunk_start, read_len) {
+            for (address, byte, flags) in
+                scan_buffer_chunk(chunk_start, &bytes, expr, endianness, chunk_len)
+            {
+                store.add(address, byte, flags);
+            }
+        }
+        progress.add(chunk_len);
+        offset += chunk_len;
+    }
+    true
+}
+
+/// Advances from match-group-aligned entry index `start` (i.e. `start == 0`, or a previous call's
+/// return value — `entries[start]` is always a group's own first byte, never a filler
+/// continuation) through whole groups until doing so would push the batch past `max_len` entries,
+/// always including at least the first whole group even if it alone exceeds `max_len` (never
+/// happens in practice — the widest group is 8 bytes, the widest scannable numeric value — but
+/// keeps this from ever getting stuck). Splitting [`narrow_scan`]'s read/re-test into
+/// [`SCAN_CHUNK_LEN`]-ish batches must never split a group in two: [`narrow_swath`] re-derives
+/// each match's old value from however many contiguous filler entries follow its first byte, so a
+/// group cut in half would silently shrink to whatever fraction landed in the first batch.
+fn batch_entries_end(entries: &[SwathEntry], start: usize, max_len: usize) -> usize {
+    debug_assert!(!entries[start].flags.is_empty());
+    let mut end = start;
+    loop {
+        // Always consume at least the first whole group regardless of `max_len` (see the doc
+        // comment above); after that, stop as soon as `max_len` is reached.
+        if end > start && end - start >= max_len {
+            break;
+        }
+        if end >= entries.len() {
+            break;
+        }
+        end += 1; // the group's own flagged byte
+        while end < entries.len() && entries[end].flags.is_empty() {
+            end += 1; // its filler continuation
+        }
+    }
+    end
 }
 
 /// Rejects an `expr` whose `data_type`/`match_type` needs a criterion it doesn't have.
@@ -483,18 +593,27 @@ fn probe(
     }
 }
 
-/// Scans one contiguous region (already read into `bytes`, starting at `base`) for a first
-/// scan, returning `(address, byte, flags)` triples in ascending address order, ready to feed
-/// into [`SwathStore::add`].
+/// Scans one contiguous region (already read into `bytes`, starting at `base`) for a first scan,
+/// returning `(address, byte, flags)` triples in ascending address order, ready to feed into
+/// [`SwathStore::add`]. Only includes entries belonging to a match/filler group whose own match
+/// started before `keep_before` (a byte offset into `bytes`) — pass `usize::MAX` for an unchunked
+/// scan of the whole buffer (nothing to trim).
 ///
 /// A byte is included either because it starts its own match (per [`probe`]), or because it
 /// falls within the width of an earlier match in the same region — the latter is filler kept
-/// only so a later narrowing scan can reconstruct that match's multi-byte old value.
-fn scan_buffer(
+/// only so a later narrowing scan can reconstruct that match's multi-byte old value. `keep_before`
+/// exists for [`scan_region_chunked`]: `bytes` there is one chunk's own share of a region plus a
+/// short overlap tail borrowed from the next chunk (wide enough that a match starting right at
+/// the boundary is still fully visible here), and `keep_before` (the chunk's own length, excluding
+/// that tail) excludes any group that only starts in the borrowed tail — it belongs to, and gets
+/// rescanned as part of, the next chunk's own (overlap-extended) read, so excluding it here is
+/// what keeps it from being reported twice.
+fn scan_buffer_chunk(
     base: usize,
     bytes: &[u8],
     expr: &ScanExpr,
     endianness: Endianness,
+    keep_before: usize,
 ) -> Vec<(usize, u8, MatchFlags)> {
     let own: Vec<Option<(usize, MatchFlags)>> = (0..bytes.len())
         .map(|offset| probe(&bytes[offset..], expr, None, endianness))
@@ -502,8 +621,15 @@ fn scan_buffer(
 
     let mut results = Vec::new();
     let mut reach = 0usize;
+    let mut group_start = 0usize;
     for (offset, &own_match) in own.iter().enumerate() {
         if own_match.is_none() && offset >= reach {
+            continue;
+        }
+        if own_match.is_some() {
+            group_start = offset;
+        }
+        if group_start >= keep_before {
             continue;
         }
         let flags = own_match.map_or(MatchFlags::empty(), |(_, flags)| flags);

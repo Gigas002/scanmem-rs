@@ -131,7 +131,7 @@ fn value_to_bytes_bytes_and_str_pass_through_unchanged() {
 fn scan_buffer_finds_a_single_equal_to_match() {
     let expr = equal_to_expr("42");
     let bytes = 42i32.to_ne_bytes();
-    let results = scan_buffer(0x1000, &bytes, &expr, Endianness::Native);
+    let results = scan_buffer_chunk(0x1000, &bytes, &expr, Endianness::Native, usize::MAX);
 
     assert_eq!(results.len(), 4);
     assert_eq!(results[0].0, 0x1000);
@@ -146,24 +146,124 @@ fn scan_buffer_finds_a_single_equal_to_match() {
 fn scan_buffer_finds_no_matches() {
     let expr = equal_to_expr("42");
     let bytes = 7i32.to_ne_bytes();
-    assert!(scan_buffer(0x1000, &bytes, &expr, Endianness::Native).is_empty());
+    assert!(scan_buffer_chunk(0x1000, &bytes, &expr, Endianness::Native, usize::MAX).is_empty());
 }
 
 #[test]
 fn scan_buffer_records_overlapping_matches_at_adjacent_addresses() {
     // Every byte here independently equals 0x11 under Integer8, so each address is its own
-    // match start; scan_buffer must not skip ahead past an earlier match's width.
+    // match start; scan_buffer_chunk must not skip ahead past an earlier match's width.
     let expr = ScanExpr {
         data_type: ScanDataType::Integer8,
         match_type: MatchType::EqualTo,
         criterion: ScanCriterion::Value(UserValue::Number(parse_int("0x11").unwrap())),
     };
     let bytes = [0x11u8, 0x11, 0x11];
-    let results = scan_buffer(0x1000, &bytes, &expr, Endianness::Native);
+    let results = scan_buffer_chunk(0x1000, &bytes, &expr, Endianness::Native, usize::MAX);
 
     let addresses: Vec<usize> = results.iter().map(|(address, _, _)| *address).collect();
     assert_eq!(addresses, vec![0x1000, 0x1001, 0x1002]);
     assert!(results.iter().all(|(_, _, flags)| !flags.is_empty()));
+}
+
+#[test]
+fn scan_buffer_chunk_matches_an_unchunked_scan_across_a_synthetic_boundary() {
+    // A single i32 match at offset 2, straddling a synthetic chunk boundary at offset 4 — proves
+    // `scan_buffer_chunk`'s overlap+`keep_before` trimming reproduces exactly what one unchunked
+    // `scan_buffer` call over the whole buffer finds, with nothing duplicated or dropped.
+    let bytes: [u8; 8] = [0xAA, 0xBB, 42, 0, 0, 0, 0xCC, 0xDD];
+    let expr = equal_to_expr("42");
+    let reference = scan_buffer_chunk(0, &bytes, &expr, Endianness::Native, usize::MAX);
+
+    // Chunk 1 reads its own 4 bytes plus a 3-byte overlap tail (i32's width minus one) so the
+    // match starting at offset 2 is fully visible; chunk 2 reads only its own remaining 4 bytes,
+    // since offset 4 is the region's actual end here.
+    let mut chunked = scan_buffer_chunk(0, &bytes[0..7], &expr, Endianness::Native, 4);
+    chunked.extend(scan_buffer_chunk(
+        4,
+        &bytes[4..8],
+        &expr,
+        Endianness::Native,
+        4,
+    ));
+
+    assert_eq!(chunked, reference);
+}
+
+#[test]
+fn scan_buffer_chunk_excludes_a_group_starting_at_or_after_keep_before() {
+    let expr = equal_to_expr("42");
+    let bytes = 42i32.to_ne_bytes();
+
+    assert!(scan_buffer_chunk(0x1000, &bytes, &expr, Endianness::Native, 0).is_empty());
+    assert_eq!(
+        scan_buffer_chunk(0x1000, &bytes, &expr, Endianness::Native, 1).len(),
+        4
+    );
+}
+
+#[test]
+fn scan_buffer_chunk_keeps_the_full_filler_tail_of_a_boundary_straddling_match() {
+    // The match itself starts at offset 2 (before `keep_before`), but its filler tail runs
+    // through offset 5 — past `keep_before` — and must still be kept in full: it belongs to a
+    // group that already started inside the owned chunk.
+    let bytes: [u8; 7] = [0xAA, 0xBB, 42, 0, 0, 0, 0xCC];
+    let expr = equal_to_expr("42");
+
+    let results = scan_buffer_chunk(0, &bytes, &expr, Endianness::Native, 4);
+
+    let addresses: Vec<usize> = results.iter().map(|(address, _, _)| *address).collect();
+    assert_eq!(addresses, vec![2, 3, 4, 5]);
+}
+
+#[test]
+fn batch_entries_end_stops_at_the_first_group_boundary_at_or_after_max_len() {
+    let entries = vec![
+        SwathEntry {
+            old_value: 1,
+            flags: MatchFlags::U8,
+        },
+        SwathEntry {
+            old_value: 2,
+            flags: MatchFlags::U8,
+        },
+        SwathEntry {
+            old_value: 3,
+            flags: MatchFlags::empty(), // filler, continues the group started at index 2
+        },
+        SwathEntry {
+            old_value: 4,
+            flags: MatchFlags::U8,
+        },
+    ];
+
+    // A max_len of 2 lands mid-group (index 2 is filler for the group starting at index 1), so
+    // the batch must extend to index 3 — the next real group boundary — not stop short of it.
+    assert_eq!(batch_entries_end(&entries, 0, 2), 3);
+    // A max_len that already lands exactly on a group boundary needs no extension.
+    assert_eq!(batch_entries_end(&entries, 0, 1), 1);
+}
+
+#[test]
+fn batch_entries_end_always_includes_at_least_the_first_whole_group() {
+    let entries = vec![
+        SwathEntry {
+            old_value: 1,
+            flags: MatchFlags::U8,
+        },
+        SwathEntry {
+            old_value: 2,
+            flags: MatchFlags::empty(),
+        },
+        SwathEntry {
+            old_value: 3,
+            flags: MatchFlags::empty(),
+        },
+    ];
+
+    // max_len of 0 would ask for an empty batch, but the whole 3-entry group starting at index 0
+    // must still come back in full rather than getting split.
+    assert_eq!(batch_entries_end(&entries, 0, 0), 3);
 }
 
 #[test]
@@ -256,7 +356,9 @@ fn session_matches_reconstructs_the_full_width_value_of_a_multi_byte_match() {
         criterion: ScanCriterion::Value(UserValue::Number(parse_int("54276").unwrap())),
     };
     let bytes = 54276i32.to_ne_bytes();
-    for (address, byte, flags) in scan_buffer(0x1000, &bytes, &expr, Endianness::Native) {
+    for (address, byte, flags) in
+        scan_buffer_chunk(0x1000, &bytes, &expr, Endianness::Native, usize::MAX)
+    {
         session.matches.add(address, byte, flags);
     }
 
