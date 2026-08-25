@@ -105,8 +105,9 @@ colors is a separate key:
 | Key                    | What it colors                                                                    |
 | ----------------------- | ---------------------------------------------------------------------------------- |
 | `focused-border`        | Border of whichever panel currently has focus.                                    |
-| `status-bar-fg`/`-bg`   | Status bar, normal state.                                                         |
-| `status-bar-error-fg`/`-bg` | Status bar while showing an error.                                            |
+| `status-bar-fg`/`-bg`   | Status bar, normal state — nothing attached.                                      |
+| `status-bar-attached-fg`/`-bg` | Status bar while a process is attached (and no error is showing) — the main "did my attach actually take" cue. |
+| `status-bar-error-fg`/`-bg` | Status bar while showing an error — takes priority over both of the above.    |
 | `scan-progress`         | Scan Panel's progress gauge fill.                                                 |
 | `selection`             | Selected row (every table) and the Hex View cursor cell — a background color, replacing the default reverse-video highlight. |
 | `match-changed`         | Match View's value cell for a match whose value changed on the most recent scan/refresh (§6). |
@@ -159,7 +160,13 @@ back, since there's nothing else on screen to move focus to.
 
 The status bar at the bottom of the screen always shows the currently focused panel's name
 (and `(expanded)` when applicable), the result of your last action, and a one-line hint of the
-global bindings.
+global bindings. Its color reflects attach state — one color while nothing is attached
+(`theme.toml`'s `status-bar-fg`/`-bg`, gray by default), another once you are
+(`status-bar-attached-fg`/`-bg`, green by default) — so a glance tells you whether your last
+attach actually took. An error turns it red (`status-bar-error-fg`/`-bg`) regardless of attach
+state, and also pops a dialog on top of everything else showing the full error text — press any
+key to dismiss it and get back to what you were doing; the status bar itself stays red until your
+next action.
 
 > Cheat View only appears in the grid and the `Tab` cycle at all when `gameconqueror` is built with
 > the `cheat-list` feature (§1, on by default); Hex View likewise only appears when built with the
@@ -370,3 +377,15 @@ bar reports the write's result (or why it failed, e.g. no process attached).
 | Terminal looks broken after a crash                          | Shouldn't happen — a panic hook restores the terminal (disables raw mode, leaves the alternate screen) before the default panic message prints. If it does happen anyway, run `reset` in your shell. |
 | Nothing happens when I run the binary                        | Check whether it was built with `--no-default-features` (no `tui` feature) — that build has no terminal UI by design.                                                                                |
 | Exits immediately with a `config.toml`/`theme.toml` error      | The message names the exact key and file — a missing *explicitly requested* `--config`/`--theme` path, a malformed TOML file, or a value gameconqueror doesn't recognize (e.g. a typo'd color name or scan type) all fail fast at startup rather than falling back silently. A missing *conventional* path (no `--config`/`--theme` given) is never the cause — that's normal and just uses defaults. |
+
+**Getting a diagnostic log**: gameconqueror never prints to stdout/stderr while the TUI is running
+(`ratatui` owns the terminal), so ordinary output isn't where to look. Instead it writes a
+`tracing` log to `config.toml`'s `log-file` (default `$TMPDIR/gameconqueror.log`, usually
+`/tmp/gameconqueror.log`) at whatever `log-level` you've set (default `warn`; set it to `trace` in
+`config.toml` for maximum detail while reproducing an issue). It records every attach/detach,
+scan/refresh start and outcome, memory write (address, value, success/failure), and — if
+gameconqueror panics — the panic message itself, so the log survives even if the terminal that ran
+it is long closed by the time you look. If it *does* panic, the default Rust panic message also
+still prints to stderr; redirect only stderr (never stdout — that's what the TUI itself renders
+to) to capture it, e.g. `RUST_BACKTRACE=full gameconqueror 2>crash.log` (`gameconqueror e>
+crash.log` in `nushell`).
