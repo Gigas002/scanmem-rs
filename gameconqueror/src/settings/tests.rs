@@ -11,10 +11,43 @@ fn cli(args: &[&str]) -> CliArgs {
     CliArgs::parse_from(full)
 }
 
+#[cfg(feature = "config")]
+fn write_temp(name: &str, contents: &str) -> std::path::PathBuf {
+    let path = std::env::temp_dir().join(format!(
+        "gameconqueror-settings-test-{}-{name}",
+        std::process::id()
+    ));
+    std::fs::write(&path, contents).expect("failed to write temp file");
+    path
+}
+
+#[cfg(not(feature = "config"))]
 #[test]
 fn defaults_when_nothing_is_provided() {
     let settings = resolve(&cli(&[])).expect("resolve should succeed with no config file");
     assert_eq!(settings, Settings::default());
+}
+
+#[cfg(feature = "config")]
+#[test]
+fn defaults_when_nothing_is_provided() {
+    // Explicit-but-empty config/theme files stand in for "nothing provided" rather than the
+    // ambient conventional `$XDG_CONFIG_HOME/gameconqueror/*.toml` — otherwise this test's result
+    // depends on whatever the machine running it happens to have sitting at that path.
+    let config_path = write_temp("empty-config.toml", "");
+    let theme_path = write_temp("empty-theme.toml", "");
+
+    let settings = resolve(&cli(&[
+        "--config",
+        config_path.to_str().unwrap(),
+        "--theme",
+        theme_path.to_str().unwrap(),
+    ]))
+    .expect("resolve should succeed with an empty config file");
+    assert_eq!(settings, Settings::default());
+
+    std::fs::remove_file(&config_path).ok();
+    std::fs::remove_file(&theme_path).ok();
 }
 
 #[test]

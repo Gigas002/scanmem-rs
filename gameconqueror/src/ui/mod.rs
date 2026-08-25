@@ -3,6 +3,7 @@
 
 #[cfg(feature = "cheat-list")]
 mod cheat_view;
+mod error_dialog;
 mod help_overlay;
 #[cfg(feature = "hex-view")]
 mod hex_view;
@@ -62,12 +63,16 @@ impl Drop for TerminalGuard {
 }
 
 /// Installs a panic hook that restores the terminal *before* the default hook prints the panic,
-/// so a panic mid-render never leaves the shell in raw mode / the alternate screen.
+/// so a panic mid-render never leaves the shell in raw mode / the alternate screen. Also logs the
+/// panic through `tracing` — the default hook only prints to stderr, which is easy to lose if the
+/// terminal that ran gameconqueror closed before anyone read it, but `tracing`'s sink is a file
+/// that survives that.
 fn install_panic_hook() {
     let default_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         let _ = disable_raw_mode();
         let _ = execute!(io::stdout(), LeaveAlternateScreen);
+        tracing::error!(%info, "panic");
         default_hook(info);
     }));
 }

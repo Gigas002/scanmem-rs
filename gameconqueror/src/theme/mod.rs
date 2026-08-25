@@ -38,6 +38,10 @@ pub struct FileTheme {
     pub status_bar_bg: Option<String>,
     /// Status bar text, normal (non-error) state.
     pub status_bar_fg: Option<String>,
+    /// Status bar background while a process is attached (and no error is showing).
+    pub status_bar_attached_bg: Option<String>,
+    /// Status bar text while a process is attached (and no error is showing).
+    pub status_bar_attached_fg: Option<String>,
     /// Status bar background while showing an error status.
     pub status_bar_error_bg: Option<String>,
     /// Status bar text while showing an error status.

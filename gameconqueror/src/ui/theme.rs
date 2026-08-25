@@ -21,9 +21,13 @@ use crate::theme::FileTheme;
 pub struct Theme {
     /// Border of whichever panel currently has focus.
     pub focused_border: Style,
-    /// Status bar, normal (non-error) state.
+    /// Status bar while nothing is attached (and no error is showing).
     pub status_bar: Style,
-    /// Status bar while showing an error status.
+    /// Status bar while a process is attached (and no error is showing) — the main "did my
+    /// attach actually take" visual cue, distinct from [`Self::status_bar`].
+    pub status_bar_attached: Style,
+    /// Status bar while showing an error status — takes priority over both of the above
+    /// regardless of attach state.
     pub status_bar_error: Style,
     /// Scan Panel's progress gauge fill.
     pub scan_progress: Style,
@@ -43,6 +47,7 @@ impl Default for Theme {
                 .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),
             status_bar: Style::default().fg(Color::Black).bg(Color::Gray),
+            status_bar_attached: Style::default().fg(Color::Black).bg(Color::Green),
             status_bar_error: Style::default().fg(Color::White).bg(Color::Red),
             scan_progress: Style::default().fg(Color::Cyan),
             selection: Style::default().add_modifier(Modifier::REVERSED),
@@ -96,6 +101,16 @@ impl Theme {
             }
             if let Some(v) = &file.status_bar_bg {
                 theme.status_bar = theme.status_bar.bg(parse_color("status-bar-bg", v)?);
+            }
+            if let Some(v) = &file.status_bar_attached_fg {
+                theme.status_bar_attached = theme
+                    .status_bar_attached
+                    .fg(parse_color("status-bar-attached-fg", v)?);
+            }
+            if let Some(v) = &file.status_bar_attached_bg {
+                theme.status_bar_attached = theme
+                    .status_bar_attached
+                    .bg(parse_color("status-bar-attached-bg", v)?);
             }
             if let Some(v) = &file.status_bar_error_fg {
                 theme.status_bar_error = theme
@@ -170,6 +185,7 @@ fn strip_colors(theme: Theme) -> Theme {
     Theme {
         focused_border: strip(theme.focused_border),
         status_bar: strip(theme.status_bar),
+        status_bar_attached: strip(theme.status_bar_attached).add_modifier(Modifier::BOLD),
         status_bar_error: strip(theme.status_bar_error)
             .add_modifier(Modifier::REVERSED | Modifier::BOLD),
         scan_progress: strip(theme.scan_progress).add_modifier(Modifier::REVERSED),

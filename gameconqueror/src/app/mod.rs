@@ -48,9 +48,25 @@ pub fn update(state: &mut AppState, msg: Msg) {
             Some(status)
         }
         Msg::PollScan => poll_scan(state),
-        Msg::Write { address, value } => Some(with_session(state, |session| {
-            session.write(address, &value).map(|()| "ok".to_owned())
-        })),
+        Msg::Write { address, value } => {
+            let value_display = value.to_string();
+            tracing::info!(address = %format!("{address:#x}"), value = %value_display, "write requested");
+            let status = with_session(state, |session| {
+                session.write(address, &value).map(|()| "ok".to_owned())
+            });
+            match status.level {
+                StatusLevel::Error => tracing::warn!(
+                    address = %format!("{address:#x}"),
+                    value = %value_display,
+                    error = %status.text,
+                    "write failed"
+                ),
+                StatusLevel::Info => {
+                    tracing::info!(address = %format!("{address:#x}"), "write succeeded");
+                }
+            }
+            Some(status)
+        }
         #[cfg(feature = "hex-view")]
         Msg::FocusHexView(address) => Some(focus_hex_view(state, address)),
         #[cfg(feature = "hex-view")]
@@ -126,7 +142,10 @@ pub fn update(state: &mut AppState, msg: Msg) {
         }
         Msg::RunScan => Some(run_scan(state)),
         Msg::NewScan => Some(new_scan(state)),
-        Msg::RefreshMatches => Some(spawn_scan(state, Session::refresh_matches)),
+        Msg::RefreshMatches => {
+            tracing::info!("refresh matches requested");
+            Some(spawn_scan(state, Session::refresh_matches))
+        }
         Msg::CycleMatchSort => {
             state.match_sort = state.match_sort.next();
             state.match_selected = 0;
@@ -219,6 +238,10 @@ pub fn update(state: &mut AppState, msg: Msg) {
                 None
             }
         }
+        Msg::DismissError => {
+            state.error_dialog_visible = false;
+            None
+        }
         Msg::Quit => {
             state.quit = true;
             None
@@ -226,6 +249,9 @@ pub fn update(state: &mut AppState, msg: Msg) {
     };
 
     if let Some(status) = status {
+        if status.level == StatusLevel::Error {
+            state.error_dialog_visible = true;
+        }
         state.status = Some(status);
     }
 }
@@ -234,19 +260,33 @@ fn attach(state: &mut AppState, pid: u32) -> Status {
     let Some(pid) = rustix::process::Pid::from_raw(pid as i32) else {
         return Status::error("pid must not be zero");
     };
+    let raw_pid = pid.as_raw_pid();
+    tracing::info!(pid = raw_pid, "attaching");
     match state.attach(pid) {
-        Ok(region_count) => Status::info(format!(
-            "attached to pid {}: {region_count} region(s)",
-            pid.as_raw_pid()
-        )),
-        Err(err) => Status::error(err.to_string()),
+        Ok(region_count) => {
+            tracing::info!(pid = raw_pid, region_count, "attached");
+            Status::info(format!(
+                "attached to pid {raw_pid}: {region_count} region(s)"
+            ))
+        }
+        Err(err) => {
+            tracing::warn!(pid = raw_pid, error = %err, "attach failed");
+            Status::error(err.to_string())
+        }
     }
 }
 
 fn detach(state: &mut AppState) -> Status {
+    let pid = state.attached().map(|process| process.pid);
     match state.detach() {
-        Ok(()) => Status::info("detached"),
-        Err(err) => Status::error(err.to_string()),
+        Ok(()) => {
+            tracing::info!(?pid, "detached");
+            Status::info("detached")
+        }
+        Err(err) => {
+            tracing::warn!(?pid, error = %err, "detach failed");
+            Status::error(err.to_string())
+        }
     }
 }
 
@@ -317,9 +357,22 @@ fn commit_hex_edit(state: &mut AppState) -> Status {
     match session.write(address, &Value::U8(byte)) {
         Ok(()) => {
             state.hex_buffer[state.hex_cursor] = byte;
+            tracing::info!(
+                address = %format!("{address:#x}"),
+                byte = %format!("{byte:#04x}"),
+                "hex byte write succeeded"
+            );
             Status::info(format!("wrote {byte:#04x} @ {address:#x}"))
         }
-        Err(err) => Status::error(err.to_string()),
+        Err(err) => {
+            tracing::warn!(
+                address = %format!("{address:#x}"),
+                byte = %format!("{byte:#04x}"),
+                error = %err,
+                "hex byte write failed"
+            );
+            Status::error(err.to_string())
+        }
     }
 }
 
@@ -636,7 +689,10 @@ fn next_match_type(current: MatchType) -> MatchType {
 
 fn run_scan(state: &mut AppState) -> Status {
     match build_scan_expr(state) {
-        Ok(expr) => spawn_scan(state, move |session| session.run_scan(&expr)),
+        Ok(expr) => {
+            tracing::info!(data_type = ?expr.data_type, match_type = ?expr.match_type, "scan requested");
+            spawn_scan(state, move |session| session.run_scan(&expr))
+        }
         Err(err) => Status::error(err),
     }
 }
@@ -644,7 +700,10 @@ fn run_scan(state: &mut AppState) -> Status {
 /// Like [`run_scan`], but always discards the current matches and scans from scratch — `Msg::NewScan`.
 fn new_scan(state: &mut AppState) -> Status {
     match build_scan_expr(state) {
-        Ok(expr) => spawn_scan(state, move |session| session.run_new_scan(&expr)),
+        Ok(expr) => {
+            tracing::info!(data_type = ?expr.data_type, match_type = ?expr.match_type, "new scan requested");
+            spawn_scan(state, move |session| session.run_new_scan(&expr))
+        }
         Err(err) => Status::error(err),
     }
 }
@@ -707,13 +766,20 @@ fn poll_scan(state: &mut AppState) -> Option<Status> {
             state.session = Some(session);
             update_match_change_tracking(state);
             Some(match result {
-                Ok(stats) => Status::info(format!("{} match(es)", stats.matches)),
-                Err(err) => Status::error(err.to_string()),
+                Ok(stats) => {
+                    tracing::info!(matches = stats.matches, "scan finished");
+                    Status::info(format!("{} match(es)", stats.matches))
+                }
+                Err(err) => {
+                    tracing::warn!(error = %err, "scan failed");
+                    Status::error(err.to_string())
+                }
             })
         }
         Err(mpsc::TryRecvError::Empty) => None,
         Err(mpsc::TryRecvError::Disconnected) => {
             state.scan_job = None;
+            tracing::error!("scan thread terminated unexpectedly");
             Some(Status::error("scan thread terminated unexpectedly"))
         }
     }

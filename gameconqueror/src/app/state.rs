@@ -171,6 +171,11 @@ pub struct AppState {
     pub(super) help_visible: bool,
     pub(super) quit: bool,
     pub(super) status: Option<Status>,
+    /// `true` while the error dialog modal is showing on top of everything else — set whenever
+    /// [`super::update`] resolves a new [`StatusLevel::Error`] status, cleared by any keypress.
+    /// The status bar keeps showing the error text/color regardless of this flag; the dialog is
+    /// a supplementary, harder-to-miss surface for the same message.
+    pub(super) error_dialog_visible: bool,
 }
 
 impl Default for AppState {
@@ -220,6 +225,7 @@ impl Default for AppState {
             help_visible: false,
             quit: false,
             status: None,
+            error_dialog_visible: false,
         }
     }
 }
@@ -304,6 +310,11 @@ impl AppState {
 
     pub fn status(&self) -> Option<&Status> {
         self.status.as_ref()
+    }
+
+    /// `true` while the error dialog modal should render on top of everything else.
+    pub fn error_dialog_visible(&self) -> bool {
+        self.error_dialog_visible
     }
 
     pub fn processes(&self) -> &[ProcessEntry] {

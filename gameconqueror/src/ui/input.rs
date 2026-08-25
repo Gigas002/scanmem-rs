@@ -8,13 +8,19 @@ use crate::ui::keymap;
 
 /// Handles one key event against `state`.
 ///
-/// While the focused panel's text field is active (the Process Picker's filter, the Scan
-/// Panel's value/range input, or the Match View's filter), printable keys and backspace edit
-/// that field directly (composing free-form text can't be expressed as a fixed key table);
-/// everything else goes through `ui/keymap.rs`, falling back to `Enter` attaching to the
-/// currently selected process.
+/// While the error dialog is showing, every key dismisses it and nothing else — checked before
+/// any other capture below, since it renders on top of everything. Otherwise, while the focused
+/// panel's text field is active (the Process Picker's filter, the Scan Panel's value/range
+/// input, or the Match View's filter), printable keys and backspace edit that field directly
+/// (composing free-form text can't be expressed as a fixed key table); everything else goes
+/// through `ui/keymap.rs`, falling back to `Enter` attaching to the currently selected process.
 pub fn handle_key(state: &mut AppState, key: KeyEvent) {
     if key.kind != KeyEventKind::Press {
+        return;
+    }
+
+    if state.error_dialog_visible() {
+        app::update(state, Msg::DismissError);
         return;
     }
 

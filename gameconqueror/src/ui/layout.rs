@@ -13,7 +13,7 @@ use crate::app::{AppState, Focus, StatusLevel};
 use crate::ui::cheat_view;
 #[cfg(feature = "hex-view")]
 use crate::ui::hex_view;
-use crate::ui::{help_overlay, match_view, process_picker, scan_panel};
+use crate::ui::{error_dialog, help_overlay, match_view, process_picker, scan_panel};
 
 /// Renders the current frame: either the multi-panel grid or (while `AppState::expanded`) just
 /// the focused panel fullscreen, then a status bar showing the current focus, the last status
@@ -37,6 +37,10 @@ pub fn render(frame: &mut Frame, state: &AppState) {
     if state.help_visible() {
         help_overlay::render(frame, state.focus());
     }
+
+    // Last, so it renders on top of every other overlay — an error is the most urgent thing on
+    // screen.
+    error_dialog::render(frame, state);
 }
 
 /// Renders only the focused panel into `area`, filling it entirely — `Msg::ToggleExpand`
@@ -112,7 +116,11 @@ fn status_bar(state: &AppState) -> Paragraph<'_> {
         state.focus(),
         scan_label.unwrap_or_default(),
     );
-    let mut style = crate::ui::theme::theme().status_bar;
+    let mut style = if state.attached().is_some() {
+        crate::ui::theme::theme().status_bar_attached
+    } else {
+        crate::ui::theme::theme().status_bar
+    };
 
     if let Some(status) = state.status() {
         text = format!("{text} — {}", status.text);

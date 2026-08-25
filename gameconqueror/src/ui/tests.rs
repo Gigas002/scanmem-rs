@@ -11,7 +11,7 @@ use super::layout::render;
 use super::{help_overlay, input, keymap, match_view, process_picker, scan_panel, theme};
 #[cfg(feature = "cheat-list")]
 use crate::app::PathPromptKind;
-use crate::app::{AppState, Focus, Msg, update};
+use crate::app::{AppState, Focus, Msg, StatusLevel, update};
 
 #[test]
 fn installing_the_panic_hook_does_not_panic() {
@@ -621,6 +621,33 @@ fn layout_renders_the_path_prompt_overlay_without_panicking() {
 }
 
 #[test]
+fn layout_renders_the_error_dialog_without_panicking() {
+    let backend = TestBackend::new(40, 10);
+    let mut terminal = Terminal::new(backend).unwrap();
+    let mut state = AppState::default();
+    update(&mut state, Msg::Attach(0));
+    assert!(state.error_dialog_visible());
+
+    terminal.draw(|frame| render(frame, &state)).unwrap();
+}
+
+#[test]
+fn any_key_dismisses_the_error_dialog_and_is_otherwise_swallowed() {
+    let mut state = AppState::default();
+    update(&mut state, Msg::Attach(0));
+    assert!(state.error_dialog_visible());
+    let focus_before = state.focus();
+
+    // A key that would normally cycle focus (`Tab`) is swallowed by the dialog instead.
+    input::handle_key(&mut state, KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+
+    assert!(!state.error_dialog_visible());
+    assert_eq!(state.focus(), focus_before);
+    // The status text itself is untouched — only the dialog closes.
+    assert_eq!(state.status().unwrap().level, StatusLevel::Error);
+}
+
+#[test]
 #[cfg(feature = "cheat-list")]
 fn cheat_view_bindings_match_the_documented_table() {
     let cases = [
@@ -780,6 +807,8 @@ fn theme_default_matches_the_documented_colors() {
     assert!(default.focused_border.add_modifier.contains(Modifier::BOLD));
     assert_eq!(default.status_bar.fg, Some(Color::Black));
     assert_eq!(default.status_bar.bg, Some(Color::Gray));
+    assert_eq!(default.status_bar_attached.fg, Some(Color::Black));
+    assert_eq!(default.status_bar_attached.bg, Some(Color::Green));
     assert_eq!(default.status_bar_error.fg, Some(Color::White));
     assert_eq!(default.status_bar_error.bg, Some(Color::Red));
     assert_eq!(default.scan_progress.fg, Some(Color::Cyan));
@@ -798,6 +827,8 @@ fn theme_resolve_applies_file_overrides_over_the_defaults() {
     let file = FileTheme {
         focused_border: Some("magenta".to_owned()),
         match_changed: Some("#ff8800".to_owned()),
+        status_bar_attached_fg: Some("white".to_owned()),
+        status_bar_attached_bg: Some("blue".to_owned()),
         ..FileTheme::default()
     };
 
@@ -812,6 +843,8 @@ fn theme_resolve_applies_file_overrides_over_the_defaults() {
         resolved.match_changed.fg,
         Some(Color::Rgb(0xff, 0x88, 0x00))
     );
+    assert_eq!(resolved.status_bar_attached.fg, Some(Color::White));
+    assert_eq!(resolved.status_bar_attached.bg, Some(Color::Blue));
     // Untouched fields keep their default.
     assert_eq!(resolved.status_bar.fg, Some(Color::Black));
 }
@@ -846,9 +879,17 @@ fn theme_resolve_without_color_strips_every_color_but_keeps_modifiers() {
     assert_eq!(resolved.focused_border.fg, None);
     assert_eq!(resolved.status_bar.fg, None);
     assert_eq!(resolved.status_bar.bg, None);
+    assert_eq!(resolved.status_bar_attached.fg, None);
+    assert_eq!(resolved.status_bar_attached.bg, None);
     assert_eq!(resolved.match_changed.fg, None);
     // Structural modifiers survive, including the fallback added for styles that would
     // otherwise become visually blank without a color.
+    assert!(
+        resolved
+            .status_bar_attached
+            .add_modifier
+            .contains(ratatui::style::Modifier::BOLD)
+    );
     assert!(
         resolved
             .status_bar_error

@@ -137,6 +137,10 @@ pub enum Msg {
     ShowHelp,
     /// Close a popup/overlay/prompt without acting.
     Dismiss,
+    /// Close the error dialog modal — dispatched for any keypress while it's showing (not just
+    /// `Esc`/`Dismiss`'s usual bindings), so it never blocks input for longer than a single
+    /// keystroke.
+    DismissError,
     /// Request application exit.
     Quit,
 }

@@ -185,6 +185,39 @@ fn attach_with_zero_pid_reports_an_error_status_without_touching_focus() {
 }
 
 #[test]
+fn an_error_status_opens_the_error_dialog() {
+    let mut state = AppState::default();
+    assert!(!state.error_dialog_visible());
+
+    update(&mut state, Msg::Attach(0));
+
+    assert_eq!(state.status().unwrap().level, StatusLevel::Error);
+    assert!(state.error_dialog_visible());
+}
+
+#[test]
+fn an_info_status_does_not_open_the_error_dialog() {
+    let mut state = AppState::default();
+
+    update(&mut state, Msg::RefreshProcessList);
+
+    assert_eq!(state.status().unwrap().level, StatusLevel::Info);
+    assert!(!state.error_dialog_visible());
+}
+
+#[test]
+fn dismiss_error_closes_the_error_dialog_without_clearing_the_status_text() {
+    let mut state = AppState::default();
+    update(&mut state, Msg::Attach(0));
+    assert!(state.error_dialog_visible());
+
+    update(&mut state, Msg::DismissError);
+
+    assert!(!state.error_dialog_visible());
+    assert_eq!(state.status().unwrap().level, StatusLevel::Error);
+}
+
+#[test]
 fn operations_that_require_a_session_report_not_attached() {
     for msg in [
         Msg::Detach,

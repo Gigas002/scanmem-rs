@@ -17,11 +17,17 @@
 # Border of whichever panel currently has focus — the main "where am I" cue in the grid.
 focused-border = "cyan"
 
-# Status bar (bottom line), normal (non-error) state.
+# Status bar (bottom line), normal (non-error) state — nothing attached yet.
 status-bar-fg = "black"
 status-bar-bg = "gray"
 
-# Status bar while showing an error status (a failed scan, write, attach, ...).
+# Status bar while a process is attached (and no error is showing) — the main visual cue for
+# "did my attach actually take", distinct from the not-attached colors above.
+status-bar-attached-fg = "black"
+status-bar-attached-bg = "green"
+
+# Status bar while showing an error status (a failed scan, write, attach, ...) — takes priority
+# over both of the above regardless of attach state.
 status-bar-error-fg = "white"
 status-bar-error-bg = "red"
 
