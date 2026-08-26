@@ -136,6 +136,29 @@ fn value_flag_matches_its_own_width() {
 }
 
 #[test]
+fn value_numeric_key_widens_every_numeric_variant_to_f64() {
+    assert_eq!(Value::U8(1).numeric_key(), 1.0);
+    assert_eq!(Value::I32(-54276).numeric_key(), -54276.0);
+    assert_eq!(Value::F32(1.5).numeric_key(), 1.5);
+}
+
+#[test]
+fn value_numeric_key_sorts_non_numeric_values_last() {
+    let mut values = [
+        Value::Bytes(vec![1]),
+        Value::I32(100),
+        Value::Str("z".to_owned()),
+        Value::I32(-5),
+    ];
+    values.sort_by(|a, b| a.numeric_key().partial_cmp(&b.numeric_key()).unwrap());
+
+    assert_eq!(values[0], Value::I32(-5));
+    assert_eq!(values[1], Value::I32(100));
+    assert!(matches!(values[2], Value::Bytes(_) | Value::Str(_)));
+    assert!(matches!(values[3], Value::Bytes(_) | Value::Str(_)));
+}
+
+#[test]
 fn value_display_round_trips_through_the_underlying_type() {
     let cases: &[(Value, &str)] = &[
         (Value::U8(42), "42"),

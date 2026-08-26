@@ -6,7 +6,7 @@ mod ptrace;
 use std::fs::{File, OpenOptions};
 use std::os::unix::fs::FileExt;
 
-use rustix::process::{Pid, WaitOptions, waitpid};
+use rustix::process::{Pid, Signal, WaitOptions, kill_process, waitpid};
 
 use crate::error::ScanmemError;
 use crate::maps::{Region, parse_maps};
@@ -19,17 +19,16 @@ pub struct Process {
 }
 
 impl Process {
-    /// Attaches to `pid` via `PTRACE_ATTACH`, waits for the resulting stop, then opens
-    /// `/proc/<pid>/mem` for read/write — replaces `sm_attach`.
+    /// Attaches to `pid` via `PTRACE_ATTACH`, waits for the resulting stop, then immediately
+    /// resumes it — `PTRACE_ATTACH` implicitly stops the tracee, but staying attached must not
+    /// otherwise pause the target for as long as it's attached (that would freeze the game just
+    /// for having a session open). Opens `/proc/<pid>/mem` for read/write before returning —
+    /// replaces `sm_attach`. Callers that need a consistent snapshot (a scan) should bracket it
+    /// with [`Self::stop`]/[`Self::resume`].
     pub fn attach(pid: Pid) -> Result<Self, ScanmemError> {
         ptrace::attach(pid)?;
-
-        let (_, status) = waitpid(Some(pid), WaitOptions::empty())
-            .map_err(std::io::Error::from)?
-            .ok_or(ScanmemError::ProcessExited)?;
-        if !status.stopped() {
-            return Err(ScanmemError::ProcessExited);
-        }
+        wait_for_stop(pid)?;
+        ptrace::cont(pid)?;
 
         let mem = OpenOptions::new()
             .read(true)
@@ -44,10 +43,27 @@ impl Process {
         self.pid
     }
 
-    /// Detaches, resuming the target's execution — replaces `sm_detach`. `/proc/<pid>/mem` is
-    /// closed (by dropping `self.mem`) before the underlying `PTRACE_DETACH` call, matching the
+    /// Stops the tracee (`SIGSTOP`, observed via the ptrace relationship [`Self::attach`]
+    /// established) so a scan can read a consistent memory snapshot. Pair with [`Self::resume`]
+    /// once the scan is done — the target must not stay paused any longer than that.
+    pub fn stop(&self) -> Result<(), ScanmemError> {
+        kill_process(self.pid, Signal::STOP).map_err(std::io::Error::from)?;
+        wait_for_stop(self.pid)
+    }
+
+    /// Resumes the tracee after [`Self::stop`].
+    pub fn resume(&self) -> Result<(), ScanmemError> {
+        ptrace::cont(self.pid)
+    }
+
+    /// Detaches, resuming the target's execution — replaces `sm_detach`. `PTRACE_DETACH` is only
+    /// valid while the tracee is in a ptrace-stop, so this stops it first (a harmless no-op if a
+    /// scan already left it stopped — see [`Self::stop`]); the target keeps running the rest of
+    /// the time it's attached, so this is normally the one that briefly pauses it. `/proc/<pid>/mem`
+    /// is closed (by dropping `self.mem`) before the underlying `PTRACE_DETACH` call, matching the
     /// C code's close-before-detach ordering.
     pub fn detach(self) -> Result<(), ScanmemError> {
+        self.stop()?;
         drop(self.mem);
         ptrace::detach(self.pid)
     }
@@ -70,6 +86,19 @@ impl Process {
         let text = std::fs::read_to_string(maps_path(self.pid))?;
         Ok(parse_maps(&text))
     }
+}
+
+/// Blocks until `pid` reports a ptrace-stop (per `ptrace(2)`, both the implicit stop from
+/// `PTRACE_ATTACH` and a `SIGSTOP` delivered to an already-attached tracee count), used by both
+/// [`Process::attach`] and [`Process::stop`].
+fn wait_for_stop(pid: Pid) -> Result<(), ScanmemError> {
+    let (_, status) = waitpid(Some(pid), WaitOptions::empty())
+        .map_err(std::io::Error::from)?
+        .ok_or(ScanmemError::ProcessExited)?;
+    if !status.stopped() {
+        return Err(ScanmemError::ProcessExited);
+    }
+    Ok(())
 }
 
 fn mem_path(pid: Pid) -> String {

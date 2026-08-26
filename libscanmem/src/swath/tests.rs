@@ -88,6 +88,80 @@ fn nth_match_skips_filler_bytes_and_returns_the_right_location() {
 }
 
 #[test]
+fn matches_with_location_yields_the_same_matches_as_matches_plus_their_location() {
+    let mut store = SwathStore::new();
+    store.add(100, 1, MatchFlags::U8);
+    store.add(101, 0, MatchFlags::empty());
+    store.add(102, 2, MatchFlags::U8);
+
+    let collected: Vec<(MatchLocation, usize, u8)> = store
+        .matches_with_location()
+        .map(|(location, addr, e)| (location, addr, e.old_value))
+        .collect();
+
+    assert_eq!(
+        collected,
+        vec![
+            (
+                MatchLocation {
+                    swath_index: 0,
+                    entry_index: 0
+                },
+                100,
+                1
+            ),
+            (
+                MatchLocation {
+                    swath_index: 0,
+                    entry_index: 2
+                },
+                102,
+                2
+            ),
+        ]
+    );
+}
+
+#[test]
+fn match_bytes_gathers_a_match_and_its_contiguous_filler_bytes() {
+    let mut store = SwathStore::new();
+    // A 4-byte match starting at 100 (own flags on the first byte, filler on the next three),
+    // immediately followed by an unrelated 1-byte match at 104.
+    store.add(100, 0x04, MatchFlags::U32 | MatchFlags::S32);
+    store.add(101, 0x00, MatchFlags::empty());
+    store.add(102, 0xd4, MatchFlags::empty());
+    store.add(103, 0x00, MatchFlags::empty());
+    store.add(104, 0xff, MatchFlags::U8);
+
+    let location = MatchLocation {
+        swath_index: 0,
+        entry_index: 0,
+    };
+    assert_eq!(
+        store.match_bytes(location),
+        Some(vec![0x04, 0x00, 0xd4, 0x00])
+    );
+
+    let second = MatchLocation {
+        swath_index: 0,
+        entry_index: 4,
+    };
+    assert_eq!(store.match_bytes(second), Some(vec![0xff]));
+}
+
+#[test]
+fn match_bytes_returns_none_for_an_out_of_bounds_location() {
+    let store = SwathStore::new();
+    assert_eq!(
+        store.match_bytes(MatchLocation {
+            swath_index: 0,
+            entry_index: 0
+        }),
+        None
+    );
+}
+
+#[test]
 fn entry_at_returns_none_for_an_out_of_bounds_location() {
     let mut store = SwathStore::new();
     store.add(100, 1, MatchFlags::U8);

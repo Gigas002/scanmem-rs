@@ -70,6 +70,26 @@ impl Value {
             Value::Bytes(_) | Value::Str(_) => MatchFlags::empty(),
         }
     }
+
+    /// A numeric ordering key for sorting mixed-width matches by value (e.g. `gameconqueror`'s
+    /// Match View "sort by value" column) — `Value` can't derive `Ord` itself since its float
+    /// variants only implement `PartialOrd`. Every numeric variant widens to `f64`; non-numeric
+    /// values (`Bytes`/`Str`) have no natural numeric order, so they sort after every numeric one.
+    pub fn numeric_key(&self) -> f64 {
+        match self {
+            Value::U8(v) => f64::from(*v),
+            Value::I8(v) => f64::from(*v),
+            Value::U16(v) => f64::from(*v),
+            Value::I16(v) => f64::from(*v),
+            Value::U32(v) => f64::from(*v),
+            Value::I32(v) => f64::from(*v),
+            Value::U64(v) => *v as f64,
+            Value::I64(v) => *v as f64,
+            Value::F32(v) => f64::from(*v),
+            Value::F64(v) => *v,
+            Value::Bytes(_) | Value::Str(_) => f64::INFINITY,
+        }
+    }
 }
 
 impl fmt::Display for Value {

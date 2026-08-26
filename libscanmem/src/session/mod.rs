@@ -3,11 +3,11 @@
 use rustix::process::Pid;
 
 use crate::error::{Result, ScanmemError};
-use crate::interrupt::StopFlag;
+use crate::interrupt::{ScanProgress, StopFlag};
 use crate::maps::Region;
 use crate::process::Process;
 use crate::scanroutines::{self, Endianness, MatchType, ScanDataType};
-use crate::swath::{Swath, SwathStore};
+use crate::swath::{Swath, SwathEntry, SwathStore};
 use crate::value::{ByteOrWildcard, MatchFlags, NumberValue, UserValue, Value};
 
 /// A comparison value for a [`ScanExpr`].
@@ -55,6 +55,18 @@ impl ScanExpr {
         match &self.criterion {
             ScanCriterion::Value(UserValue::Str(pattern)) => Some(pattern),
             _ => None,
+        }
+    }
+
+    /// The widest a single match against this expression can be — 8 for every numeric type
+    /// (`i64`/`f64`), or the pattern's own length for `ByteArray`/`String`. Used to size the
+    /// overlap between chunked region reads in [`scan_region_chunked`] so a match starting near a
+    /// chunk boundary is never split across two reads.
+    fn max_match_width(&self) -> usize {
+        match self.data_type {
+            ScanDataType::ByteArray => self.bytes_pattern().map_or(8, <[_]>::len),
+            ScanDataType::String => self.string_pattern().map_or(8, str::len),
+            _ => 8,
         }
     }
 }
@@ -108,10 +120,15 @@ pub struct ScanStats {
 }
 
 /// A recorded match, as returned by [`Session::matches`]/[`Session::nth_match`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// `old_value` is the *full* value last observed at `address` — [`SwathStore`] itself only keeps
+/// one raw byte per address plus [`MatchFlags`] recording which numeric width(s)/sign(s) matched
+/// there (see the `swath` module), so a multi-byte match (e.g. an `i32`) has its bytes gathered
+/// and decoded back into a single value on the way out; see `reconstruct_value`.
+#[derive(Debug, Clone, PartialEq)]
 pub struct MatchView {
     pub address: usize,
-    pub old_value: u8,
+    pub old_value: Value,
     pub flags: MatchFlags,
 }
 
@@ -123,6 +140,7 @@ pub struct Session {
     matches: SwathStore,
     options: SessionOptions,
     stop_flag: StopFlag,
+    progress: ScanProgress,
 }
 
 impl Session {
@@ -133,6 +151,7 @@ impl Session {
             matches: SwathStore::new(),
             options: SessionOptions::default(),
             stop_flag: StopFlag::new(),
+            progress: ScanProgress::new(),
         })
     }
 
@@ -143,11 +162,74 @@ impl Session {
         process.detach()
     }
 
+    /// A cloneable handle to this session's scan progress, readable from another thread while
+    /// `scan`/`snapshot` runs — obtain it *before* moving the `Session` to a background thread,
+    /// since the getters need `self`.
+    pub fn progress_handle(&self) -> ScanProgress {
+        self.progress.clone()
+    }
+
+    /// A cloneable handle to request the in-progress (or next) scan to stop early, usable from
+    /// another thread — same before-the-move caveat as [`Self::progress_handle`].
+    pub fn stop_handle(&self) -> StopFlag {
+        self.stop_flag.clone()
+    }
+
     /// Runs a first scan (if no matches are currently recorded) or narrows the current matches
-    /// against `expr`.
+    /// against `expr`, synchronously: [`Self::prepare_scan`], [`Self::run_scan`], then
+    /// [`Self::resume_after_scan`] — the target is only paused for the duration of the scan
+    /// itself, not for the rest of the attached session. A convenience wrapper for callers on a
+    /// single thread (e.g. the `scanmem` CLI's REPL); a caller that wants the actual scan work
+    /// off its own thread (e.g. a UI that can't block on it) should call the three steps
+    /// separately instead — see their docs for why they're split out.
     pub fn scan(&mut self, expr: &ScanExpr) -> Result<ScanStats> {
         validate(expr)?;
+        self.prepare_scan()?;
+        let result = self.run_scan(expr);
+        self.resume_after_scan();
+        result
+    }
+
+    /// Records every byte of every considered region as a candidate match, discarding any
+    /// current matches — the `MATCHANY` equivalent used to seed later narrowing scans.
+    /// Synchronous convenience wrapper, same reasoning as [`Self::scan`].
+    pub fn snapshot(&mut self) -> Result<ScanStats> {
+        self.prepare_scan()?;
+        let result = self.run_snapshot();
+        self.resume_after_scan();
+        result
+    }
+
+    /// Stops the target (see [`Process::stop`]) ahead of a scan/snapshot and resets the abort
+    /// flag. Must be called on the same thread that called [`Self::attach`]: ptrace ties the
+    /// tracer relationship to the specific calling *thread*, not the whole process, so the
+    /// `waitpid` this performs to confirm the stop would otherwise never observe it (the tracee
+    /// stays stopped, but the wrong thread's call hangs forever waiting for a notification that
+    /// only the tracer thread receives). Pair with [`Self::run_scan`]/[`Self::run_snapshot`]
+    /// (safe to run on any thread) and [`Self::resume_after_scan`] (same thread-affinity
+    /// requirement as this method).
+    pub fn prepare_scan(&mut self) -> Result<()> {
         self.stop_flag.reset();
+        self.process()?.stop()
+    }
+
+    /// Resumes the target after [`Self::prepare_scan`] (and a [`Self::run_scan`]/
+    /// [`Self::run_snapshot`] in between) — same same-thread-as-[`Self::attach`] requirement as
+    /// [`Self::prepare_scan`]. Errors (e.g. the target having exited mid-scan) are swallowed:
+    /// there is nothing a caller already past the scan can usefully do about a resume failure.
+    pub fn resume_after_scan(&self) {
+        if let Ok(process) = self.process() {
+            let _ = process.resume();
+        }
+    }
+
+    /// Runs a first scan (if no matches are currently recorded) or narrows the current matches
+    /// against `expr`. The target must already be stopped via [`Self::prepare_scan`], but unlike
+    /// that method (and [`Self::resume_after_scan`]) this one never touches ptrace itself — it
+    /// only reads `/proc/<pid>/mem`, a regular file read against an fd opened back at
+    /// [`Self::attach`] — so, also unlike those two, it's safe to call from any thread.
+    pub fn run_scan(&mut self, expr: &ScanExpr) -> Result<ScanStats> {
+        validate(expr)?;
         if self.matches.match_count() == 0 {
             self.first_scan(expr)
         } else {
@@ -155,10 +237,18 @@ impl Session {
         }
     }
 
+    /// Runs a scan against every considered byte from scratch, discarding any current matches
+    /// even if some exist — unlike [`Self::run_scan`], which narrows the current matches instead
+    /// of rescanning from scratch whenever any are already recorded. Same
+    /// prepare-first/any-thread-safe contract as [`Self::run_scan`].
+    pub fn run_new_scan(&mut self, expr: &ScanExpr) -> Result<ScanStats> {
+        validate(expr)?;
+        self.first_scan(expr)
+    }
+
     /// Records every byte of every considered region as a candidate match, discarding any
-    /// current matches — the `MATCHANY` equivalent used to seed later narrowing scans.
-    pub fn snapshot(&mut self) -> Result<ScanStats> {
-        self.stop_flag.reset();
+    /// current matches. Same prepare-first/any-thread-safe contract as [`Self::run_scan`].
+    pub fn run_snapshot(&mut self) -> Result<ScanStats> {
         self.first_scan(&ScanExpr {
             data_type: ScanDataType::AnyNumber,
             match_type: MatchType::Any,
@@ -166,22 +256,86 @@ impl Session {
         })
     }
 
+    /// Re-reads every currently recorded match's bytes fresh from the target and updates their
+    /// stored values in place. Unlike [`Self::run_scan`]'s narrowing, this never filters by
+    /// value or needs a [`ScanExpr`] — every match is kept regardless of what its new value turns
+    /// out to be; a match is only dropped if its swath's region has become unreadable entirely
+    /// (e.g. unmapped since the last scan), same as a narrowing scan's read-failure handling.
+    /// Same prepare-first/any-thread-safe contract as [`Self::run_scan`].
+    pub fn refresh_matches(&mut self) -> Result<ScanStats> {
+        let old_swaths = std::mem::take(&mut self.matches);
+        self.progress.reset(
+            old_swaths
+                .swaths()
+                .iter()
+                .map(|swath| swath.entries.len())
+                .sum(),
+        );
+
+        let mut store = SwathStore::new();
+        let process = self.process()?;
+        'swaths: for swath in old_swaths.swaths() {
+            // Chunked (see `scan_region_chunked`'s docs for why) — a swath built from a broad
+            // snapshot can span an entire region, several GB in the worst case. No group
+            // alignment is needed here, unlike `narrow_scan`: every byte's flags are already
+            // fixed by the previous scan, so a chunk boundary can fall anywhere without losing
+            // anything.
+            let mut offset = 0usize;
+            while offset < swath.entries.len() {
+                if self.stop_flag.requested() {
+                    break 'swaths;
+                }
+                let chunk_len = SCAN_CHUNK_LEN.min(swath.entries.len() - offset);
+                let chunk_start = swath.address_of(offset);
+                if let Ok(fresh) = process.read(chunk_start, chunk_len) {
+                    for (index, &byte) in fresh.iter().enumerate() {
+                        store.add(
+                            chunk_start + index,
+                            byte,
+                            swath.entries[offset + index].flags,
+                        );
+                    }
+                }
+                self.progress.add(chunk_len);
+                offset += chunk_len;
+            }
+        }
+
+        self.matches = store;
+        Ok(ScanStats {
+            matches: self.matches.match_count(),
+        })
+    }
+
     /// Every currently recorded match, in ascending address order.
     pub fn matches(&self) -> impl Iterator<Item = MatchView> + '_ {
-        self.matches.matches().map(|(address, entry)| MatchView {
-            address,
-            old_value: entry.old_value,
-            flags: entry.flags,
-        })
+        let endianness = self.options.endianness;
+        self.matches
+            .matches_with_location()
+            .map(move |(location, address, entry)| {
+                let bytes = self
+                    .matches
+                    .match_bytes(location)
+                    .expect("location came from this same store's matches_with_location");
+                MatchView {
+                    address,
+                    old_value: reconstruct_value(&bytes, entry.flags, endianness),
+                    flags: entry.flags,
+                }
+            })
     }
 
     /// The `n`th recorded match (0-indexed), or `None` if there are fewer than `n + 1`.
     pub fn nth_match(&self, n: usize) -> Option<MatchView> {
         let location = self.matches.nth_match(n)?;
         let (address, entry) = self.matches.entry_at(location)?;
+        let bytes = self
+            .matches
+            .match_bytes(location)
+            .expect("location came from this same store's nth_match");
         Some(MatchView {
             address,
-            old_value: entry.old_value,
+            old_value: reconstruct_value(&bytes, entry.flags, self.options.endianness),
             flags: entry.flags,
         })
     }
@@ -232,21 +386,28 @@ impl Session {
     fn first_scan(&mut self, expr: &ScanExpr) -> Result<ScanStats> {
         let endianness = self.options.endianness;
         let region_filter = self.options.region_filter;
-        let regions = self.process()?.regions()?;
+        let regions: Vec<Region> = self
+            .process()?
+            .regions()?
+            .into_iter()
+            .filter(|region| region_filter.includes(region))
+            .collect();
+        self.progress.reset(regions.iter().map(Region::size).sum());
 
         let mut store = SwathStore::new();
-        for region in regions
-            .iter()
-            .filter(|region| region_filter.includes(region))
-        {
-            if self.stop_flag.requested() {
+        let process = self.process()?;
+        for region in &regions {
+            let finished = scan_region_chunked(
+                process,
+                region,
+                expr,
+                endianness,
+                &self.stop_flag,
+                &self.progress,
+                &mut store,
+            );
+            if !finished {
                 break;
-            }
-            let Ok(bytes) = self.process()?.read(region.start, region.size()) else {
-                continue;
-            };
-            for (address, byte, flags) in scan_buffer(region.start, &bytes, expr, endianness) {
-                store.add(address, byte, flags);
             }
         }
 
@@ -261,20 +422,38 @@ impl Session {
     fn narrow_scan(&mut self, expr: &ScanExpr) -> Result<ScanStats> {
         let endianness = self.options.endianness;
         let old_swaths = std::mem::take(&mut self.matches);
+        self.progress.reset(
+            old_swaths
+                .swaths()
+                .iter()
+                .map(|swath| swath.entries.len())
+                .sum(),
+        );
 
         let mut store = SwathStore::new();
-        for swath in old_swaths.swaths() {
-            if self.stop_flag.requested() {
-                break;
-            }
-            let Ok(fresh) = self
-                .process()?
-                .read(swath.first_byte_in_child, swath.entries.len())
-            else {
-                continue;
-            };
-            for (address, byte, flags) in narrow_swath(swath, &fresh, expr, endianness) {
-                store.add(address, byte, flags);
+        let process = self.process()?;
+        'swaths: for swath in old_swaths.swaths() {
+            // Chunked in whole match groups (see `batch_entries_end`) rather than read/tested in
+            // one call — after a broad snapshot, a single swath can be as large as an entire
+            // region, several GB in the worst case.
+            let mut batch_start = 0usize;
+            while batch_start < swath.entries.len() {
+                if self.stop_flag.requested() {
+                    break 'swaths;
+                }
+                let batch_end = batch_entries_end(&swath.entries, batch_start, SCAN_CHUNK_LEN);
+                let batch = Swath {
+                    first_byte_in_child: swath.address_of(batch_start),
+                    entries: swath.entries[batch_start..batch_end].to_vec(),
+                };
+                let len = batch.entries.len();
+                if let Ok(fresh) = process.read(batch.first_byte_in_child, len) {
+                    for (address, byte, flags) in narrow_swath(&batch, &fresh, expr, endianness) {
+                        store.add(address, byte, flags);
+                    }
+                }
+                self.progress.add(len);
+                batch_start = batch_end;
             }
         }
 
@@ -283,6 +462,82 @@ impl Session {
             matches: self.matches.match_count(),
         })
     }
+}
+
+/// Bytes read per chunk while scanning a region/swath, rather than in one allocation covering the
+/// whole thing — a single region (or, after a broad snapshot, a single swath) can span several GB
+/// as one contiguous run (e.g. a large game's heap), and without chunking neither the peak memory
+/// used nor how promptly [`StopFlag::request`] takes effect is bounded by anything but that size.
+/// Deliberately not configurable: it only trades off syscall count against peak memory/stop
+/// latency, and 4 MiB is a reasonable point on that curve for either.
+const SCAN_CHUNK_LEN: usize = 4 * 1024 * 1024;
+
+/// Scans one region in bounded-size, overlapping chunks (see [`SCAN_CHUNK_LEN`]) instead of
+/// reading/scanning it in a single allocation. Each chunk's read extends [`ScanExpr::max_match_width`]
+/// `- 1` bytes past its own share of the region so a match starting right at the boundary is still
+/// fully visible; [`scan_buffer_chunk`]'s `keep_before` then excludes that overlap tail from the
+/// results (it belongs to, and gets rescanned as part of, the next chunk) so nothing is reported
+/// twice. Returns `false` if `stop_flag` was set partway through (matches found so far are still
+/// kept), `true` if the whole region was scanned.
+fn scan_region_chunked(
+    process: &Process,
+    region: &Region,
+    expr: &ScanExpr,
+    endianness: Endianness,
+    stop_flag: &StopFlag,
+    progress: &ScanProgress,
+    store: &mut SwathStore,
+) -> bool {
+    let overlap = expr.max_match_width().saturating_sub(1);
+    let mut offset = 0usize;
+    while offset < region.size() {
+        if stop_flag.requested() {
+            return false;
+        }
+        let chunk_len = SCAN_CHUNK_LEN.min(region.size() - offset);
+        let read_len = (chunk_len + overlap).min(region.size() - offset);
+        let chunk_start = region.start + offset;
+
+        if let Ok(bytes) = process.read(chunk_start, read_len) {
+            for (address, byte, flags) in
+                scan_buffer_chunk(chunk_start, &bytes, expr, endianness, chunk_len)
+            {
+                store.add(address, byte, flags);
+            }
+        }
+        progress.add(chunk_len);
+        offset += chunk_len;
+    }
+    true
+}
+
+/// Advances from match-group-aligned entry index `start` (i.e. `start == 0`, or a previous call's
+/// return value — `entries[start]` is always a group's own first byte, never a filler
+/// continuation) through whole groups until doing so would push the batch past `max_len` entries,
+/// always including at least the first whole group even if it alone exceeds `max_len` (never
+/// happens in practice — the widest group is 8 bytes, the widest scannable numeric value — but
+/// keeps this from ever getting stuck). Splitting [`narrow_scan`]'s read/re-test into
+/// [`SCAN_CHUNK_LEN`]-ish batches must never split a group in two: [`narrow_swath`] re-derives
+/// each match's old value from however many contiguous filler entries follow its first byte, so a
+/// group cut in half would silently shrink to whatever fraction landed in the first batch.
+fn batch_entries_end(entries: &[SwathEntry], start: usize, max_len: usize) -> usize {
+    debug_assert!(!entries[start].flags.is_empty());
+    let mut end = start;
+    loop {
+        // Always consume at least the first whole group regardless of `max_len` (see the doc
+        // comment above); after that, stop as soon as `max_len` is reached.
+        if end > start && end - start >= max_len {
+            break;
+        }
+        if end >= entries.len() {
+            break;
+        }
+        end += 1; // the group's own flagged byte
+        while end < entries.len() && entries[end].flags.is_empty() {
+            end += 1; // its filler continuation
+        }
+    }
+    end
 }
 
 /// Rejects an `expr` whose `data_type`/`match_type` needs a criterion it doesn't have.
@@ -338,18 +593,27 @@ fn probe(
     }
 }
 
-/// Scans one contiguous region (already read into `bytes`, starting at `base`) for a first
-/// scan, returning `(address, byte, flags)` triples in ascending address order, ready to feed
-/// into [`SwathStore::add`].
+/// Scans one contiguous region (already read into `bytes`, starting at `base`) for a first scan,
+/// returning `(address, byte, flags)` triples in ascending address order, ready to feed into
+/// [`SwathStore::add`]. Only includes entries belonging to a match/filler group whose own match
+/// started before `keep_before` (a byte offset into `bytes`) — pass `usize::MAX` for an unchunked
+/// scan of the whole buffer (nothing to trim).
 ///
 /// A byte is included either because it starts its own match (per [`probe`]), or because it
 /// falls within the width of an earlier match in the same region — the latter is filler kept
-/// only so a later narrowing scan can reconstruct that match's multi-byte old value.
-fn scan_buffer(
+/// only so a later narrowing scan can reconstruct that match's multi-byte old value. `keep_before`
+/// exists for [`scan_region_chunked`]: `bytes` there is one chunk's own share of a region plus a
+/// short overlap tail borrowed from the next chunk (wide enough that a match starting right at
+/// the boundary is still fully visible here), and `keep_before` (the chunk's own length, excluding
+/// that tail) excludes any group that only starts in the borrowed tail — it belongs to, and gets
+/// rescanned as part of, the next chunk's own (overlap-extended) read, so excluding it here is
+/// what keeps it from being reported twice.
+fn scan_buffer_chunk(
     base: usize,
     bytes: &[u8],
     expr: &ScanExpr,
     endianness: Endianness,
+    keep_before: usize,
 ) -> Vec<(usize, u8, MatchFlags)> {
     let own: Vec<Option<(usize, MatchFlags)>> = (0..bytes.len())
         .map(|offset| probe(&bytes[offset..], expr, None, endianness))
@@ -357,8 +621,15 @@ fn scan_buffer(
 
     let mut results = Vec::new();
     let mut reach = 0usize;
+    let mut group_start = 0usize;
     for (offset, &own_match) in own.iter().enumerate() {
         if own_match.is_none() && offset >= reach {
+            continue;
+        }
+        if own_match.is_some() {
+            group_start = offset;
+        }
+        if group_start >= keep_before {
             continue;
         }
         let flags = own_match.map_or(MatchFlags::empty(), |(_, flags)| flags);
@@ -412,6 +683,56 @@ fn narrow_swath(
         index = end;
     }
     results
+}
+
+/// Reconstructs the full-width [`Value`] a match's raw `bytes` (as returned by
+/// [`SwathStore::match_bytes`]) represent, honoring `endianness` and the [`MatchFlags`] recorded
+/// for the match's first byte.
+///
+/// A byte-array/string pattern match is the only case [`probe`] sets every [`MatchFlags`] bit at
+/// once — recognized here by `bytes.len() > 1` (a plain numeric scan never sets every bit *and*
+/// spans more than one byte, since [`scan`](scanroutines::scan) only sets the bits for the widths
+/// it actually tried) and rendered as raw [`Value::Bytes`] instead of a spurious numeric guess.
+/// Otherwise picks the highest-priority matching numeric interpretation that fits `bytes` — float
+/// over integer, wider over narrower, signed over unsigned at the same width. Ties (a value that
+/// matched as both `u32` and `i32`, say) have no single "correct" answer, so this is a
+/// deterministic, documented pick rather than a recovery of the user's exact original scan-time
+/// intent, which the recorded flags alone can't distinguish.
+fn reconstruct_value(bytes: &[u8], flags: MatchFlags, endianness: Endianness) -> Value {
+    if bytes.len() > 1 && flags == MatchFlags::all() {
+        return Value::Bytes(bytes.to_vec());
+    }
+
+    let numbers = scanroutines::decode_number(bytes, endianness);
+    let candidates = [
+        (MatchFlags::F64, numbers.f64.map(Value::F64)),
+        (MatchFlags::F32, numbers.f32.map(Value::F32)),
+        (MatchFlags::S64, numbers.i64.map(Value::I64)),
+        (MatchFlags::U64, numbers.u64.map(Value::U64)),
+        (MatchFlags::S32, numbers.i32.map(Value::I32)),
+        (MatchFlags::U32, numbers.u32.map(Value::U32)),
+        (MatchFlags::S16, numbers.i16.map(Value::I16)),
+        (MatchFlags::U16, numbers.u16.map(Value::U16)),
+        (MatchFlags::S8, numbers.i8.map(Value::I8)),
+        (MatchFlags::U8, numbers.u8.map(Value::U8)),
+    ];
+    for (bit, value) in candidates {
+        if flags.contains(bit)
+            && let Some(value) = value
+        {
+            return value;
+        }
+    }
+
+    // Only reachable with hand-built `SwathEntry`s (e.g. in tests) whose flags claim a width
+    // wider than the bytes actually recorded — every real scan's flags always fit its own width.
+    numbers
+        .u64
+        .map(Value::U64)
+        .or(numbers.u32.map(Value::U32))
+        .or(numbers.u16.map(Value::U16))
+        .or(numbers.u8.map(Value::U8))
+        .unwrap_or_else(|| Value::Bytes(bytes.to_vec()))
 }
 
 /// Converts a [`Value`] to its raw byte representation, honoring `endianness` for numeric
