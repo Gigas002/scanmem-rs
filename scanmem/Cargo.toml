@@ -12,7 +12,7 @@ repository.workspace = true
 clap = { version = "4", features = ["derive"] }
 libscanmem = { path = "../libscanmem", version = "0.1.0" }
 rustix = { version = "1", features = ["process"] }
-rustyline = { version = "18", default-features = false, features = ["custom-bindings"] }
+rustyline = { version = "19", default-features = false, features = ["custom-bindings"] }
 thiserror = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = "0.3"
