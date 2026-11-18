@@ -211,6 +211,9 @@ where
 /// `user_range` supplies the `(low, high)` bounds for [`MatchType::Range`]; `user` supplies the
 /// single comparison value (or, for `IncreasedBy`/`DecreasedBy`, the delta) for every other
 /// value-comparing match type.
+///
+/// Scanning many positions with the same arguments is faster through [`Matcher`], which this
+/// builds for one position.
 pub fn scan(
     memory: &[u8],
     data_type: ScanDataType,
@@ -220,13 +223,63 @@ pub fn scan(
     user: Option<&NumberValue>,
     user_range: Option<(&NumberValue, &NumberValue)>,
 ) -> Option<(usize, MatchFlags)> {
-    let mut flags = MatchFlags::empty();
-    let mut best = 0usize;
+    Matcher::new(data_type, match_type, endianness, user, user_range).test(memory, old)
+}
 
-    macro_rules! try_width {
-        ($field:ident, $flag:expr) => {
-            if let Some(mem_val) = $field::decode(memory, endianness) {
-                let old_val = old.and_then(|o| o.$field);
+/// One width a [`Matcher`] tests, with its comparison value already picked out of the user's
+/// [`NumberValue`].
+#[derive(Debug, Clone, Copy)]
+enum WidthTest {
+    U8(NumberCriterion<u8>),
+    I8(NumberCriterion<i8>),
+    U16(NumberCriterion<u16>),
+    I16(NumberCriterion<i16>),
+    U32(NumberCriterion<u32>),
+    I32(NumberCriterion<i32>),
+    U64(NumberCriterion<u64>),
+    I64(NumberCriterion<i64>),
+    F32(NumberCriterion<f32>),
+    F64(NumberCriterion<f64>),
+}
+
+/// [`scan`] prepared once for a whole scan: the widths `data_type` covers, each with its
+/// comparison value resolved, so testing a position only decodes and compares.
+#[derive(Debug, Clone)]
+pub struct Matcher {
+    match_type: MatchType,
+    endianness: Endianness,
+    widths: Vec<WidthTest>,
+    /// For [`MatchType::EqualTo`]: which first bytes some width's value can start with.
+    first_bytes: Option<Box<[bool; 256]>>,
+    /// For [`MatchType::Any`]: the result for any position with 8 or more bytes left, where
+    /// every width decodes and so matches.
+    any_full: Option<(usize, MatchFlags)>,
+}
+
+impl Matcher {
+    /// Same arguments as [`scan`], minus the memory and the previous value.
+    pub fn new(
+        data_type: ScanDataType,
+        match_type: MatchType,
+        endianness: Endianness,
+        user: Option<&NumberValue>,
+        user_range: Option<(&NumberValue, &NumberValue)>,
+    ) -> Self {
+        // A match type that compares against a value never matches a width the value doesn't
+        // fit (`matches_number` needs the criterion); leaving such widths out changes nothing.
+        let needs_criterion = !matches!(
+            match_type,
+            MatchType::Any
+                | MatchType::Update
+                | MatchType::NotChanged
+                | MatchType::Changed
+                | MatchType::Increased
+                | MatchType::Decreased
+        );
+        let mut widths = Vec::new();
+
+        macro_rules! width {
+            ($field:ident, $variant:ident) => {{
                 let criterion = match match_type {
                     MatchType::Range => user_range
                         .and_then(|(lo, hi)| Some(NumberCriterion::Range(lo.$field?, hi.$field?)))
@@ -236,63 +289,172 @@ pub fn scan(
                         .map(NumberCriterion::Value)
                         .unwrap_or(NumberCriterion::None),
                 };
-                if matches_number(mem_val, old_val, match_type, criterion) {
-                    flags.insert($flag);
-                    best = best.max($field::WIDTH);
+                if !(needs_criterion && matches!(criterion, NumberCriterion::None)) {
+                    widths.push(WidthTest::$variant(criterion));
                 }
+            }};
+        }
+
+        match data_type {
+            ScanDataType::Integer8 => {
+                width!(u8, U8);
+                width!(i8, I8);
             }
+            ScanDataType::Integer16 => {
+                width!(u16, U16);
+                width!(i16, I16);
+            }
+            ScanDataType::Integer32 => {
+                width!(u32, U32);
+                width!(i32, I32);
+            }
+            ScanDataType::Integer64 => {
+                width!(u64, U64);
+                width!(i64, I64);
+            }
+            ScanDataType::Float32 => width!(f32, F32),
+            ScanDataType::Float64 => width!(f64, F64),
+            ScanDataType::AnyInteger => {
+                width!(u8, U8);
+                width!(i8, I8);
+                width!(u16, U16);
+                width!(i16, I16);
+                width!(u32, U32);
+                width!(i32, I32);
+                width!(u64, U64);
+                width!(i64, I64);
+            }
+            ScanDataType::AnyFloat => {
+                width!(f32, F32);
+                width!(f64, F64);
+            }
+            ScanDataType::AnyNumber => {
+                width!(u8, U8);
+                width!(i8, I8);
+                width!(u16, U16);
+                width!(i16, I16);
+                width!(u32, U32);
+                width!(i32, I32);
+                width!(u64, U64);
+                width!(i64, I64);
+                width!(f32, F32);
+                width!(f64, F64);
+            }
+            ScanDataType::ByteArray | ScanDataType::String => {}
+        }
+
+        let mut matcher = Self {
+            match_type,
+            endianness,
+            widths,
+            first_bytes: None,
+            any_full: None,
         };
+        if match_type == MatchType::EqualTo {
+            matcher.first_bytes = Some(matcher.equal_to_first_bytes());
+        }
+        if match_type == MatchType::Any {
+            matcher.any_full = matcher.test_each_width(&[0; 8], None);
+        }
+        matcher
     }
 
-    match data_type {
-        ScanDataType::Integer8 => {
-            try_width!(u8, MatchFlags::U8);
-            try_width!(i8, MatchFlags::S8);
+    /// The first byte of each width's value as it sits in memory. A float also equals the
+    /// other zero (`-0.0 == 0.0`), and NaN equals nothing.
+    fn equal_to_first_bytes(&self) -> Box<[bool; 256]> {
+        let mut table = Box::new([false; 256]);
+        let swapped = self.endianness == Endianness::Swapped;
+        let mut mark = |ne_bytes: &[u8]| {
+            let first = if swapped {
+                ne_bytes[ne_bytes.len() - 1]
+            } else {
+                ne_bytes[0]
+            };
+            table[usize::from(first)] = true;
+        };
+        for width in &self.widths {
+            match *width {
+                WidthTest::U8(NumberCriterion::Value(v)) => mark(&v.to_ne_bytes()),
+                WidthTest::I8(NumberCriterion::Value(v)) => mark(&v.to_ne_bytes()),
+                WidthTest::U16(NumberCriterion::Value(v)) => mark(&v.to_ne_bytes()),
+                WidthTest::I16(NumberCriterion::Value(v)) => mark(&v.to_ne_bytes()),
+                WidthTest::U32(NumberCriterion::Value(v)) => mark(&v.to_ne_bytes()),
+                WidthTest::I32(NumberCriterion::Value(v)) => mark(&v.to_ne_bytes()),
+                WidthTest::U64(NumberCriterion::Value(v)) => mark(&v.to_ne_bytes()),
+                WidthTest::I64(NumberCriterion::Value(v)) => mark(&v.to_ne_bytes()),
+                WidthTest::F32(NumberCriterion::Value(v)) => {
+                    mark(&v.to_ne_bytes());
+                    mark(&(-v).to_ne_bytes());
+                }
+                WidthTest::F64(NumberCriterion::Value(v)) => {
+                    mark(&v.to_ne_bytes());
+                    mark(&(-v).to_ne_bytes());
+                }
+                // Without a value, an equal-to width never matches.
+                _ => {}
+            }
         }
-        ScanDataType::Integer16 => {
-            try_width!(u16, MatchFlags::U16);
-            try_width!(i16, MatchFlags::S16);
-        }
-        ScanDataType::Integer32 => {
-            try_width!(u32, MatchFlags::U32);
-            try_width!(i32, MatchFlags::S32);
-        }
-        ScanDataType::Integer64 => {
-            try_width!(u64, MatchFlags::U64);
-            try_width!(i64, MatchFlags::S64);
-        }
-        ScanDataType::Float32 => try_width!(f32, MatchFlags::F32),
-        ScanDataType::Float64 => try_width!(f64, MatchFlags::F64),
-        ScanDataType::AnyInteger => {
-            try_width!(u8, MatchFlags::U8);
-            try_width!(i8, MatchFlags::S8);
-            try_width!(u16, MatchFlags::U16);
-            try_width!(i16, MatchFlags::S16);
-            try_width!(u32, MatchFlags::U32);
-            try_width!(i32, MatchFlags::S32);
-            try_width!(u64, MatchFlags::U64);
-            try_width!(i64, MatchFlags::S64);
-        }
-        ScanDataType::AnyFloat => {
-            try_width!(f32, MatchFlags::F32);
-            try_width!(f64, MatchFlags::F64);
-        }
-        ScanDataType::AnyNumber => {
-            try_width!(u8, MatchFlags::U8);
-            try_width!(i8, MatchFlags::S8);
-            try_width!(u16, MatchFlags::U16);
-            try_width!(i16, MatchFlags::S16);
-            try_width!(u32, MatchFlags::U32);
-            try_width!(i32, MatchFlags::S32);
-            try_width!(u64, MatchFlags::U64);
-            try_width!(i64, MatchFlags::S64);
-            try_width!(f32, MatchFlags::F32);
-            try_width!(f64, MatchFlags::F64);
-        }
-        ScanDataType::ByteArray | ScanDataType::String => return None,
+        table
     }
 
-    (best > 0).then_some((best, flags))
+    /// Tests the value at the start of `memory` (and, for match types that compare with the
+    /// previous scan, `old`): the widest matching width and every width that matched, or `None`.
+    #[inline]
+    pub fn test(&self, memory: &[u8], old: Option<&NumberValue>) -> Option<(usize, MatchFlags)> {
+        if let Some(first_bytes) = &self.first_bytes {
+            // A float's negation only differs in the sign, which is in another byte unless
+            // byte-swapped; marking both covers `-0.0 == 0.0` either way, and a value that
+            // isn't zero just adds a harmless candidate.
+            if !first_bytes[usize::from(*memory.first()?)] {
+                return None;
+            }
+        }
+        if memory.len() >= 8
+            && let Some(result) = self.any_full
+        {
+            return Some(result);
+        }
+        self.test_each_width(memory, old)
+    }
+
+    #[inline]
+    fn test_each_width(
+        &self,
+        memory: &[u8],
+        old: Option<&NumberValue>,
+    ) -> Option<(usize, MatchFlags)> {
+        let mut flags = MatchFlags::empty();
+        let mut best = 0usize;
+
+        macro_rules! check {
+            ($t:ty, $field:ident, $flag:expr, $criterion:expr) => {
+                if let Some(mem_val) = <$t>::decode(memory, self.endianness) {
+                    let old_val = old.and_then(|o| o.$field);
+                    if matches_number(mem_val, old_val, self.match_type, *$criterion) {
+                        flags.insert($flag);
+                        best = best.max(<$t>::WIDTH);
+                    }
+                }
+            };
+        }
+
+        for width in &self.widths {
+            match width {
+                WidthTest::U8(c) => check!(u8, u8, MatchFlags::U8, c),
+                WidthTest::I8(c) => check!(i8, i8, MatchFlags::S8, c),
+                WidthTest::U16(c) => check!(u16, u16, MatchFlags::U16, c),
+                WidthTest::I16(c) => check!(i16, i16, MatchFlags::S16, c),
+                WidthTest::U32(c) => check!(u32, u32, MatchFlags::U32, c),
+                WidthTest::I32(c) => check!(i32, i32, MatchFlags::S32, c),
+                WidthTest::U64(c) => check!(u64, u64, MatchFlags::U64, c),
+                WidthTest::I64(c) => check!(i64, i64, MatchFlags::S64, c),
+                WidthTest::F32(c) => check!(f32, f32, MatchFlags::F32, c),
+                WidthTest::F64(c) => check!(f64, f64, MatchFlags::F64, c),
+            }
+        }
+
+        (best > 0).then_some((best, flags))
+    }
 }
 
 /// Matches a fixed byte pattern (with `??` wildcards) at the start of `memory` — replaces

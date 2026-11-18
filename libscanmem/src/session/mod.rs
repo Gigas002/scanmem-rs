@@ -434,6 +434,7 @@ impl Session {
 
         let mut store = SwathStore::new();
         let process = self.process()?;
+        let probe = Probe::new(expr, endianness);
         'swaths: for swath in old_swaths.swaths() {
             // Chunked in whole match groups (see `batch_entries_end`) rather than read/tested in
             // one call — after a broad snapshot, a single swath can be as large as an entire
@@ -450,7 +451,7 @@ impl Session {
                 };
                 let len = batch.entries.len();
                 if let Ok(fresh) = process.read(batch.first_byte_in_child, len) {
-                    for (address, byte, flags) in narrow_swath(&batch, &fresh, expr, endianness) {
+                    for (address, byte, flags) in narrow_swath(&batch, &fresh, &probe, endianness) {
                         store.add(address, byte, flags);
                     }
                 }
@@ -491,6 +492,7 @@ fn scan_region_chunked(
     store: &mut SwathStore,
 ) -> bool {
     let overlap = expr.max_match_width().saturating_sub(1);
+    let probe = Probe::new(expr, endianness);
     let mut offset = 0usize;
     while offset < region.size() {
         if stop_flag.requested() {
@@ -502,7 +504,7 @@ fn scan_region_chunked(
 
         if let Ok(bytes) = process.read(chunk_start, read_len) {
             for (address, byte, flags) in
-                scan_buffer_chunk(chunk_start, &bytes, expr, endianness, chunk_len)
+                scan_buffer_chunk(chunk_start, &bytes, &probe, endianness, chunk_len)
             {
                 store.add(address, byte, flags);
             }
@@ -562,35 +564,51 @@ fn validate(expr: &ScanExpr) -> Result<()> {
     Ok(())
 }
 
-/// Tests `expr` against `memory` at one position, optionally against `old` raw bytes recorded
-/// at that same position by a previous scan — returns the matched width in bytes and which
-/// flags to record, or `None` if nothing matched here.
-fn probe(
-    memory: &[u8],
-    expr: &ScanExpr,
-    old: Option<&[u8]>,
-    endianness: Endianness,
-) -> Option<(usize, MatchFlags)> {
-    match expr.data_type {
-        ScanDataType::ByteArray => {
-            let pattern = expr.bytes_pattern()?;
-            scanroutines::scan_bytearray(memory, pattern).map(|width| (width, MatchFlags::all()))
-        }
-        ScanDataType::String => {
-            let pattern = expr.string_pattern()?;
-            scanroutines::scan_string(memory, pattern).map(|width| (width, MatchFlags::all()))
-        }
-        _ => {
-            let old_number = old.map(|bytes| scanroutines::decode_number(bytes, endianness));
-            scanroutines::scan(
-                memory,
+/// `expr` prepared once per scan, so testing a position doesn't redo per-scan work.
+enum Probe<'a> {
+    Bytes(&'a [ByteOrWildcard]),
+    Str(&'a str),
+    Number(scanroutines::Matcher),
+    /// A byte/string scan without its pattern; `validate` rejects these first.
+    Nothing,
+}
+
+impl<'a> Probe<'a> {
+    fn new(expr: &'a ScanExpr, endianness: Endianness) -> Self {
+        match expr.data_type {
+            ScanDataType::ByteArray => expr.bytes_pattern().map_or(Probe::Nothing, Probe::Bytes),
+            ScanDataType::String => expr.string_pattern().map_or(Probe::Nothing, Probe::Str),
+            _ => Probe::Number(scanroutines::Matcher::new(
                 expr.data_type,
                 expr.match_type,
                 endianness,
-                old_number.as_ref(),
                 expr.number(),
                 expr.range(),
-            )
+            )),
+        }
+    }
+
+    /// Tests the expression against `memory` at one position, optionally against `old` raw
+    /// bytes recorded at that same position by a previous scan — returns the matched width in
+    /// bytes and which flags to record, or `None` if nothing matched here.
+    #[inline]
+    fn test(
+        &self,
+        memory: &[u8],
+        old: Option<&[u8]>,
+        endianness: Endianness,
+    ) -> Option<(usize, MatchFlags)> {
+        match self {
+            Probe::Bytes(pattern) => scanroutines::scan_bytearray(memory, pattern)
+                .map(|width| (width, MatchFlags::all())),
+            Probe::Str(pattern) => {
+                scanroutines::scan_string(memory, pattern).map(|width| (width, MatchFlags::all()))
+            }
+            Probe::Number(matcher) => {
+                let old_number = old.map(|bytes| scanroutines::decode_number(bytes, endianness));
+                matcher.test(memory, old_number.as_ref())
+            }
+            Probe::Nothing => None,
         }
     }
 }
@@ -613,18 +631,15 @@ fn probe(
 fn scan_buffer_chunk(
     base: usize,
     bytes: &[u8],
-    expr: &ScanExpr,
+    probe: &Probe<'_>,
     endianness: Endianness,
     keep_before: usize,
 ) -> Vec<(usize, u8, MatchFlags)> {
-    let own: Vec<Option<(usize, MatchFlags)>> = (0..bytes.len())
-        .map(|offset| probe(&bytes[offset..], expr, None, endianness))
-        .collect();
-
     let mut results = Vec::new();
     let mut reach = 0usize;
     let mut group_start = 0usize;
-    for (offset, &own_match) in own.iter().enumerate() {
+    for offset in 0..bytes.len() {
+        let own_match = probe.test(&bytes[offset..], None, endianness);
         if own_match.is_none() && offset >= reach {
             continue;
         }
@@ -650,7 +665,7 @@ fn scan_buffer_chunk(
 fn narrow_swath(
     old_swath: &Swath,
     fresh: &[u8],
-    expr: &ScanExpr,
+    probe: &Probe<'_>,
     endianness: Endianness,
 ) -> Vec<(usize, u8, MatchFlags)> {
     let mut results = Vec::new();
@@ -674,7 +689,7 @@ fn narrow_swath(
 
         if let Some(fresh_window) = fresh.get(start..end)
             && let Some((matched_width, flags)) =
-                probe(fresh_window, expr, Some(&old_bytes), endianness)
+                probe.test(fresh_window, Some(&old_bytes), endianness)
         {
             for (i, &byte) in fresh_window[..matched_width].iter().enumerate() {
                 let entry_flags = if i == 0 { flags } else { MatchFlags::empty() };
