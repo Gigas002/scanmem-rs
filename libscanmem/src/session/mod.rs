@@ -176,6 +176,12 @@ impl Session {
         self.stop_flag.clone()
     }
 
+    /// Uses `flag` as this session's stop flag from now on, e.g. one that a `SIGINT` handler
+    /// sets (see [`StopFlag::register_sigint`]).
+    pub fn set_stop_handle(&mut self, flag: StopFlag) {
+        self.stop_flag = flag;
+    }
+
     /// Runs a first scan (if no matches are currently recorded) or narrows the current matches
     /// against `expr`, synchronously: [`Self::prepare_scan`], [`Self::run_scan`], then
     /// [`Self::resume_after_scan`] — the target is only paused for the duration of the scan

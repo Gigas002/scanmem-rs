@@ -12,5 +12,8 @@ All notable changes to this project will be documented in this file.
   `PTRACE_SEIZE`/`PTRACE_INTERRUPT` and no SIGSTOP, for the length of a scan, and a signal
   that arrives meanwhile is delivered when it resumes. `reset`, attaching elsewhere and
   quitting mid-scan leave the target running.
+- scanmem: Ctrl-C during a scan ended the REPL instead of cancelling the scan. It now stops
+  the scan and keeps the matches found so far ("stopped early: partial results"); a second
+  Ctrl-C still exits.
 
 ## [0.1.0] - 2026-09-04

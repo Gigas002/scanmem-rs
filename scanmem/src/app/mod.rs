@@ -7,6 +7,7 @@ mod script;
 use std::process::ExitCode;
 
 use libscanmem::error::ScanmemError;
+use libscanmem::interrupt::StopFlag;
 use libscanmem::session::Session;
 use rustix::process::Pid;
 
@@ -18,6 +19,8 @@ use crate::settings::Settings;
 #[derive(Default)]
 pub struct AppState {
     session: Option<Session>,
+    /// Set by Ctrl-C while a command runs (REPL only); every session scans with it.
+    interrupt: Option<StopFlag>,
 }
 
 impl AppState {
@@ -32,10 +35,24 @@ impl AppState {
     /// Attaches to `pid`, replacing any previously attached session, and returns how many
     /// memory regions the target currently has mapped.
     pub fn attach(&mut self, pid: Pid) -> Result<usize, ScanmemError> {
-        let session = Session::attach(pid)?;
+        let mut session = Session::attach(pid)?;
+        if let Some(flag) = &self.interrupt {
+            session.set_stop_handle(flag.clone());
+        }
         let region_count = session.region_count()?;
         self.session = Some(session);
         Ok(region_count)
+    }
+
+    /// Makes Ctrl-C cancel a running scan instead of ending the process (a second Ctrl-C
+    /// still does). Returns the flag, to be reset after each command.
+    pub fn cancel_scans_on_ctrl_c(&mut self) -> std::io::Result<StopFlag> {
+        let flag = StopFlag::register_sigint()?;
+        if let Some(session) = &mut self.session {
+            session.set_stop_handle(flag.clone());
+        }
+        self.interrupt = Some(flag.clone());
+        Ok(flag)
     }
 
     /// Drops the current session, if any.

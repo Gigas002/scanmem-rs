@@ -67,3 +67,17 @@ fn clones_share_the_same_underlying_counters() {
     progress.add(40);
     assert_eq!(clone.get(), (40, 100));
 }
+
+#[cfg(feature = "signals")]
+#[test]
+fn sigint_sets_a_registered_flag() {
+    let flag = StopFlag::register_sigint().expect("registering the handler failed");
+    assert!(!flag.requested());
+
+    // Handled on this thread before `raise` returns. Only one: a second SIGINT while the flag
+    // is set would end the test process, as designed.
+    // SAFETY: raise(3) only delivers a signal to the calling thread.
+    assert_eq!(unsafe { libc::raise(libc::SIGINT) }, 0);
+
+    assert!(flag.requested());
+}

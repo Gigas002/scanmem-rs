@@ -10,7 +10,8 @@ repository.workspace = true
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
-libscanmem = { path = "../libscanmem", version = "0.1.0" }
+# `signals`: Ctrl-C cancels a running scan instead of ending the REPL.
+libscanmem = { path = "../libscanmem", version = "0.1.0", features = ["signals"] }
 rustix = { version = "1", features = ["process"] }
 rustyline = { version = "19", default-features = false, features = ["custom-bindings"] }
 thiserror = { workspace = true }

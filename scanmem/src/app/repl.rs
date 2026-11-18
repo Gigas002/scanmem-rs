@@ -88,6 +88,16 @@ pub(super) fn first_word(line: &str) -> &str {
 
 /// Runs the interactive loop against `state` until the user quits or stdin closes.
 pub fn run(mut state: AppState) {
+    let interrupt = match state.cancel_scans_on_ctrl_c() {
+        Ok(flag) => Some(flag),
+        Err(err) => {
+            eprintln!(
+                "{}",
+                formatter::error(format!("Ctrl-C won't cancel scans: {err}"))
+            );
+            None
+        }
+    };
     let match_count = Rc::new(Cell::new(0));
     let mut editor =
         Editor::<ScanmemHelper, DefaultHistory>::new().expect("failed to initialize line editor");
@@ -107,6 +117,10 @@ pub fn run(mut state: AppState) {
                     Ok(command) => {
                         println!("{}", dispatch(&mut state, command));
                         update_match_count(&state, &match_count);
+                        // A Ctrl-C during this command is spent; the next one starts fresh.
+                        if let Some(flag) = &interrupt {
+                            flag.reset();
+                        }
                     }
                     Err(err) => eprintln!("{}", formatter::error(err)),
                 }
@@ -141,10 +155,12 @@ pub(super) fn dispatch(state: &mut AppState, command: Command) -> String {
     match command {
         Command::Attach(pid) => attach(state, pid),
         Command::Scan(expr) => with_session(state, |session| {
-            session.scan(&expr).map(formatter::scan_stats)
+            let stats = session.scan(&expr)?;
+            Ok(scan_result(session, stats))
         }),
         Command::Snapshot => with_session(state, |session| {
-            session.snapshot().map(formatter::scan_stats)
+            let stats = session.snapshot()?;
+            Ok(scan_result(session, stats))
         }),
         Command::List(range) => list(state, range),
         Command::Dump { address, len } => with_session(state, |session| {
@@ -165,6 +181,19 @@ pub(super) fn dispatch(state: &mut AppState, command: Command) -> String {
         }
         Command::Help => formatter::help(),
         Command::Quit => unreachable!("Command::Quit is handled by the caller"),
+    }
+}
+
+/// The match count, noting when Ctrl-C stopped the scan before it covered everything.
+fn scan_result(session: &Session, stats: libscanmem::session::ScanStats) -> String {
+    let text = formatter::scan_stats(stats);
+    if session.stop_handle().requested() {
+        format!(
+            "{text} {}",
+            formatter::info("(stopped early: partial results)")
+        )
+    } else {
+        text
     }
 }
 
