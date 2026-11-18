@@ -13,6 +13,11 @@ All notable changes to this project will be documented in this file.
 - scanmem: `delete` walked every match twice per index, so deleting 1000 of 1.5 million
   matches took 48 s and `delete !0` didn't finish; both now take a single pass (milliseconds).
   Counting matches after each command no longer decodes every value.
+- gameconqueror: with millions of matches the interface froze, because every frame (ten a
+  second) decoded, filtered and sorted all of them and formatted a table row for each. The
+  filtered, sorted list is now rebuilt only when the matches, filter or sort change, and only
+  visible rows are drawn: with 3.7 million matches, idle CPU went from 94 % to 0.4 %, an arrow
+  key from 1.5 s to 1 ms, and memory from 4.3 GiB to 560 MiB.
 
 ### Fixed
 

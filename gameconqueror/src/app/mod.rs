@@ -254,6 +254,7 @@ pub fn update(state: &mut AppState, msg: Msg) {
         }
         state.status = Some(status);
     }
+    state.refresh_match_view();
 }
 
 fn attach(state: &mut AppState, pid: u32) -> Status {
@@ -728,6 +729,7 @@ fn spawn_scan(
     let Some(mut session) = state.session.take() else {
         return not_attached(state);
     };
+    state.match_generation += 1;
 
     if let Err(err) = session.prepare_scan() {
         state.session = Some(session);
@@ -789,6 +791,7 @@ fn poll_scan(state: &mut AppState) -> Option<Status> {
 /// (`Msg::Scan`, `poll_scan`'s `Msg::RunScan`/`Msg::NewScan`/`Msg::RefreshMatches` outcomes), never
 /// mid-scan. A no-op if nothing is attached.
 fn update_match_change_tracking(state: &mut AppState) {
+    state.match_generation += 1;
     let Some(session) = state.session.as_ref() else {
         return;
     };
