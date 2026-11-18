@@ -21,6 +21,9 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- gameconqueror: a panic in the background scan lost the session and left the target stopped
+  until gameconqueror exited. The session now comes back with the panic as an error, and the
+  target resumes.
 - gameconqueror: frozen cheats were rewritten only when no key arrived for a whole poll
   interval, so holding a key (scrolling the match list) stopped them being rewritten. The
   rewrite now runs on schedule.

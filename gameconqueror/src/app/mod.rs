@@ -740,7 +740,17 @@ fn spawn_scan(
     let stop_flag = session.stop_handle();
     let (tx, rx) = mpsc::channel();
     thread::spawn(move || {
-        let result = run(&mut session);
+        // A panic must still hand the session back: dropped on this thread, it couldn't resume
+        // the target (only the thread that stopped it can), leaving it stopped until exit.
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run(&mut session)))
+            .unwrap_or_else(|panic| {
+                let message = panic
+                    .downcast_ref::<&str>()
+                    .map(|s| (*s).to_owned())
+                    .or_else(|| panic.downcast_ref::<String>().cloned())
+                    .unwrap_or_else(|| "unknown cause".to_owned());
+                Err(std::io::Error::other(format!("the scan panicked: {message}")).into())
+            });
         let _ = tx.send((session, result));
     });
 
