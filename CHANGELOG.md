@@ -15,5 +15,8 @@ All notable changes to this project will be documented in this file.
 - scanmem: Ctrl-C during a scan ended the REPL instead of cancelling the scan. It now stops
   the scan and keeps the matches found so far ("stopped early: partial results"); a second
   Ctrl-C still exits.
+- "Increased by" and "decreased by" scans panicked in debug builds when `old ± delta`
+  overflowed the width being tested (an `i8` of 120 increased by 10). Integers now wrap, as
+  release builds and C scanmem already did.
 
 ## [0.1.0] - 2026-09-04

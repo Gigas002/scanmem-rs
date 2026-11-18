@@ -123,6 +123,50 @@ macro_rules! impl_decode_bytes_float {
 
 impl_decode_bytes_float!((f32, u32), (f64, u64));
 
+/// `old ± delta` for [`MatchType::IncreasedBy`]/[`MatchType::DecreasedBy`]: wrapping for
+/// integers, so a counter that wraps around still matches (as in C scanmem) instead of
+/// overflowing, which panics in debug builds; plain arithmetic for floats.
+pub trait Delta: Copy {
+    fn plus(self, delta: Self) -> Self;
+    fn minus(self, delta: Self) -> Self;
+}
+
+macro_rules! impl_delta_int {
+    ($($t:ty),+ $(,)?) => {
+        $(
+            impl Delta for $t {
+                fn plus(self, delta: Self) -> Self {
+                    self.wrapping_add(delta)
+                }
+
+                fn minus(self, delta: Self) -> Self {
+                    self.wrapping_sub(delta)
+                }
+            }
+        )+
+    };
+}
+
+impl_delta_int!(u8, i8, u16, i16, u32, i32, u64, i64);
+
+macro_rules! impl_delta_float {
+    ($($t:ty),+ $(,)?) => {
+        $(
+            impl Delta for $t {
+                fn plus(self, delta: Self) -> Self {
+                    self + delta
+                }
+
+                fn minus(self, delta: Self) -> Self {
+                    self - delta
+                }
+            }
+        )+
+    };
+}
+
+impl_delta_float!(f32, f64);
+
 /// Compares one already-decoded memory value against `old`/`criterion` for `match_type`.
 ///
 /// This single generic routine is what every `IntegerN`/`FloatN`/`Any*` combination in [`scan`]
@@ -134,7 +178,7 @@ pub fn matches_number<T>(
     criterion: NumberCriterion<T>,
 ) -> bool
 where
-    T: Num + PartialOrd + Copy,
+    T: Num + PartialOrd + Delta,
 {
     match match_type {
         MatchType::Any => true,
@@ -152,10 +196,10 @@ where
         MatchType::Decreased => old.is_some_and(|o| memory < o),
         MatchType::IncreasedBy => old
             .zip(criterion.value())
-            .is_some_and(|(o, d)| memory == o + d),
+            .is_some_and(|(o, d)| memory == o.plus(d)),
         MatchType::DecreasedBy => old
             .zip(criterion.value())
-            .is_some_and(|(o, d)| memory == o - d),
+            .is_some_and(|(o, d)| memory == o.minus(d)),
     }
 }
 

@@ -572,3 +572,32 @@ fn decode_number_honors_swapped_endianness() {
     let decoded = decode_number(&mem, Endianness::Swapped);
     assert_eq!(decoded.u32, Some(0x0102_0304));
 }
+
+#[test]
+fn increased_and_decreased_by_wrap_instead_of_overflowing() {
+    // 120 + 10 doesn't fit an i8; this panicked in debug builds.
+    assert!(matches_number::<i8>(
+        -126,
+        Some(120),
+        MatchType::IncreasedBy,
+        NumberCriterion::Value(10)
+    ));
+    assert!(!matches_number::<i8>(
+        127,
+        Some(120),
+        MatchType::IncreasedBy,
+        NumberCriterion::Value(10)
+    ));
+    assert!(matches_number::<u8>(
+        250,
+        Some(4),
+        MatchType::DecreasedBy,
+        NumberCriterion::Value(10)
+    ));
+    assert!(matches_number::<u64>(
+        0,
+        Some(u64::MAX),
+        MatchType::IncreasedBy,
+        NumberCriterion::Value(1)
+    ));
+}
