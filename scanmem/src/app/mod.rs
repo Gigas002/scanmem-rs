@@ -77,13 +77,19 @@ pub fn run(settings: Settings) -> ExitCode {
                     ))
                 );
             }
-            Err(err) => eprintln!(
-                "{}",
-                formatter::error(format!(
-                    "failed to attach to pid {}: {err}",
-                    pid.as_raw_pid()
-                ))
-            ),
+            Err(err) => {
+                eprintln!(
+                    "{}",
+                    formatter::error(format!(
+                        "failed to attach to pid {}: {err}",
+                        pid.as_raw_pid()
+                    ))
+                );
+                // A script written for that process would only fail line by line.
+                if settings.exec.is_some() {
+                    return ExitCode::FAILURE;
+                }
+            }
         }
     }
 

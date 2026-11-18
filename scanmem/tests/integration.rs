@@ -57,6 +57,18 @@ fn exec_reports_failure_on_unknown_command() {
 }
 
 #[test]
+fn exec_stops_when_attaching_fails_and_says_why() {
+    // Above any pid_max (at most 2^22), so never a real process.
+    Command::cargo_bin("scanmem")
+        .unwrap()
+        .args(["--pid", "2147483647", "--exec", "snapshot"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("no such process"))
+        .stdout(predicate::str::contains("no process is attached").not());
+}
+
+#[test]
 fn exec_reports_failure_when_a_command_is_not_attached() {
     Command::cargo_bin("scanmem")
         .unwrap()

@@ -21,6 +21,12 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- Attach and ptrace errors say what happened: a refused attach explains `ptrace_scope` (it
+  was "Permission denied (os error 13)"), a missing process is "no such process", and a target
+  that exited is "the target process has exited" (it was "ptrace failed (errno 1)" or "No such
+  process (os error 3)"). An `--exec` script stops when `--pid` can't be attached, instead of
+  failing each command. `ScanmemError` has a new `NoSuchProcess` variant, and `Ptrace` shows the
+  errno's text.
 - Narrowing lost most matches whose bytes overlapped the next match: each match was
   re-tested only on its bytes up to the next match's start, so `scan i32 = 0` repeated on
   unchanged memory went from 3.77 million matches to 121 thousand. Matches are now tested on

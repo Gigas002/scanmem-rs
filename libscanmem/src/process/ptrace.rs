@@ -15,7 +15,26 @@ use crate::error::ScanmemError;
 /// signal. Pair with [`interrupt`] to stop it.
 #[cfg(target_os = "linux")]
 pub(super) fn seize(pid: Pid) -> Result<(), ScanmemError> {
-    request(libc::PTRACE_SEIZE, pid, 0)
+    match request(libc::PTRACE_SEIZE, pid, 0) {
+        // A zombie can't be seized: EPERM, though access was checked when attaching.
+        Err(ScanmemError::Ptrace(libc::EPERM)) if is_zombie(pid) => {
+            Err(ScanmemError::ProcessExited)
+        }
+        Err(ScanmemError::Ptrace(libc::EPERM)) => Err(ScanmemError::PermissionDenied),
+        result => result,
+    }
+}
+
+/// Whether `pid` has exited and not been reaped yet (or is gone altogether).
+#[cfg(target_os = "linux")]
+fn is_zombie(pid: Pid) -> bool {
+    match std::fs::read_to_string(format!("/proc/{}/stat", pid.as_raw_pid())) {
+        // The state follows the parenthesised command name, which may contain anything.
+        Ok(stat) => stat
+            .rsplit_once(')')
+            .is_some_and(|(_, rest)| rest.trim_start().starts_with(['Z', 'X'])),
+        Err(_) => true,
+    }
 }
 
 /// Stops a seized tracee (`PTRACE_INTERRUPT`); the stop is reported through [`wait_stop`].
@@ -83,6 +102,9 @@ fn request(request: libc::c_uint, pid: Pid, data: i32) -> Result<(), ScanmemErro
     };
     if ret == -1 {
         let errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(-1);
+        if errno == libc::ESRCH {
+            return Err(ScanmemError::ProcessExited);
+        }
         return Err(ScanmemError::Ptrace(errno));
     }
     Ok(())

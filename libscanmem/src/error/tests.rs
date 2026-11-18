@@ -8,10 +8,12 @@ fn display_messages_are_stable() {
         ScanmemError::NotAttached.to_string(),
         "no process is attached"
     );
-    assert_eq!(
-        ScanmemError::PermissionDenied.to_string(),
-        "permission denied"
+    assert!(
+        ScanmemError::PermissionDenied
+            .to_string()
+            .contains("ptrace_scope")
     );
+    assert_eq!(ScanmemError::NoSuchProcess.to_string(), "no such process");
     assert_eq!(
         ScanmemError::ProcessExited.to_string(),
         "the target process has exited"
@@ -21,9 +23,25 @@ fn display_messages_are_stable() {
         "invalid scan expression: bad expr"
     );
     assert_eq!(
-        ScanmemError::Ptrace(3).to_string(),
-        "ptrace failed (errno 3)"
+        ScanmemError::Ptrace(libc::ESRCH).to_string(),
+        "ptrace failed: No such process (os error 3)"
     );
+}
+
+#[test]
+fn esrch_from_io_means_the_process_exited() {
+    let err: ScanmemError = io::Error::from_raw_os_error(libc::ESRCH).into();
+    assert!(matches!(err, ScanmemError::ProcessExited));
+}
+
+#[test]
+fn proc_open_errors_name_their_cause() {
+    let denied = ScanmemError::from_proc_open(io::Error::from(io::ErrorKind::PermissionDenied));
+    assert!(matches!(denied, ScanmemError::PermissionDenied));
+    let missing = ScanmemError::from_proc_open(io::Error::from(io::ErrorKind::NotFound));
+    assert!(matches!(missing, ScanmemError::NoSuchProcess));
+    let other = ScanmemError::from_proc_open(io::Error::from(io::ErrorKind::InvalidData));
+    assert!(matches!(other, ScanmemError::Io(_)));
 }
 
 #[test]

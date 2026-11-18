@@ -37,7 +37,8 @@ impl Process {
         let mem = OpenOptions::new()
             .read(true)
             .write(true)
-            .open(mem_path(pid))?;
+            .open(mem_path(pid))
+            .map_err(ScanmemError::from_proc_open)?;
 
         Ok(Self {
             pid,

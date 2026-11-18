@@ -12,6 +12,7 @@
 use std::io::{BufRead, BufReader};
 use std::process::{Command, Stdio};
 
+use libscanmem::error::ScanmemError;
 use libscanmem::process::Process;
 use libscanmem::scanroutines::{MatchType, ScanDataType};
 use libscanmem::session::{ScanCriterion, ScanExpr, Session};
@@ -306,4 +307,30 @@ fn an_attached_target_keeps_running_and_receives_its_signals() {
 
     child.kill().expect("failed to kill the target");
     child.wait().expect("failed to reap the target");
+}
+
+#[test]
+#[ignore = "spawns a target process; run manually with `--ignored`"]
+fn a_target_that_exited_is_reported_as_exited() {
+    // Exits at once and stays a zombie until waited for: its /proc files fail with ESRCH and
+    // it can't be seized (EPERM), which surfaced as "No such process (os error 3)" or
+    // "ptrace failed (errno 1)".
+    let mut child = std::process::Command::new("/bin/true").spawn().unwrap();
+    let pid = Pid::from_raw(child.id() as i32).unwrap();
+    while !std::fs::read_to_string(format!("/proc/{}/stat", child.id()))
+        .unwrap()
+        .rsplit_once(')')
+        .unwrap()
+        .1
+        .trim_start()
+        .starts_with('Z')
+    {
+        std::thread::yield_now();
+    }
+
+    let result = Session::attach(pid).and_then(|mut session| session.snapshot().map(|_| ()));
+
+    let err = result.expect_err("a zombie can't be scanned");
+    assert!(matches!(err, ScanmemError::ProcessExited), "{err:?}: {err}");
+    child.wait().unwrap();
 }
