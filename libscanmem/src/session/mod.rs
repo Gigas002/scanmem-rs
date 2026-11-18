@@ -144,7 +144,8 @@ pub struct Session {
 }
 
 impl Session {
-    /// Attaches to `pid` — replaces `sm_attach`.
+    /// Attaches to `pid` — replaces `sm_attach`. The target keeps running; it is only stopped
+    /// during a scan (see [`Process`]).
     pub fn attach(pid: Pid) -> Result<Self> {
         Ok(Self {
             process: Some(Process::attach(pid)?),
@@ -155,8 +156,8 @@ impl Session {
         })
     }
 
-    /// Detaches, resuming the target's execution — replaces `sm_detach`. Further operations on
-    /// this `Session` fail with [`ScanmemError::NotAttached`].
+    /// Detaches — replaces `sm_detach`. Further operations on this `Session` fail with
+    /// [`ScanmemError::NotAttached`]. Dropping the `Session` detaches too.
     pub fn detach(&mut self) -> Result<()> {
         let process = self.process.take().ok_or(ScanmemError::NotAttached)?;
         process.detach()
@@ -201,21 +202,16 @@ impl Session {
     }
 
     /// Stops the target (see [`Process::stop`]) ahead of a scan/snapshot and resets the abort
-    /// flag. Must be called on the same thread that called [`Self::attach`]: ptrace ties the
-    /// tracer relationship to the specific calling *thread*, not the whole process, so the
-    /// `waitpid` this performs to confirm the stop would otherwise never observe it (the tracee
-    /// stays stopped, but the wrong thread's call hangs forever waiting for a notification that
-    /// only the tracer thread receives). Pair with [`Self::run_scan`]/[`Self::run_snapshot`]
-    /// (safe to run on any thread) and [`Self::resume_after_scan`] (same thread-affinity
-    /// requirement as this method).
+    /// flag. Pair with [`Self::run_scan`]/[`Self::run_snapshot`] (safe to run on any thread) and
+    /// [`Self::resume_after_scan`], which must run on the same thread as this method: ptrace ties
+    /// the tracee to the thread that stopped it, and only that thread can resume it.
     pub fn prepare_scan(&mut self) -> Result<()> {
         self.stop_flag.reset();
         self.process()?.stop()
     }
 
     /// Resumes the target after [`Self::prepare_scan`] (and a [`Self::run_scan`]/
-    /// [`Self::run_snapshot`] in between) — same same-thread-as-[`Self::attach`] requirement as
-    /// [`Self::prepare_scan`]. Errors (e.g. the target having exited mid-scan) are swallowed:
+    /// [`Self::run_snapshot`] in between), on the thread that called [`Self::prepare_scan`]. Errors (e.g. the target having exited mid-scan) are swallowed:
     /// there is nothing a caller already past the scan can usefully do about a resume failure.
     pub fn resume_after_scan(&self) {
         if let Ok(process) = self.process() {

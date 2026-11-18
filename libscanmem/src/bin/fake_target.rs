@@ -14,9 +14,22 @@ use std::ptr;
 use std::time::{Duration, Instant};
 
 const INITIAL: u32 = 0xdead_beef;
+
+/// Lets any process of the same user attach to this one. Under Yama's default
+/// `ptrace_scope = 1`, only an ancestor may attach otherwise, which rules out a `scanmem`
+/// binary started next to this one by a test; with this, the suites run without
+/// `CAP_SYS_PTRACE`. Has no effect without Yama.
+fn allow_any_tracer() {
+    #[cfg(target_os = "linux")]
+    // SAFETY: PR_SET_PTRACER takes plain integer arguments; nothing is read or written.
+    unsafe {
+        libc::prctl(libc::PR_SET_PTRACER, libc::PR_SET_PTRACER_ANY, 0, 0, 0);
+    }
+}
 const TIMEOUT: Duration = Duration::from_secs(10);
 
 fn main() {
+    allow_any_tracer();
     let mut value: u32 = INITIAL;
     let address = ptr::addr_of!(value) as usize;
     println!("{address}");

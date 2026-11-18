@@ -67,7 +67,7 @@ fn exec_reports_failure_when_a_command_is_not_attached() {
 }
 
 #[test]
-#[ignore = "requires CAP_SYS_PTRACE and a workspace build (for fake_target); run manually with \
+#[ignore = "requires a workspace build (for fake_target); run manually with \
             `cargo build --workspace && cargo test -p scanmem --test integration -- --ignored`"]
 fn exec_attaches_scans_writes_and_verifies_via_target_stdout() {
     let mut child = StdCommand::new(fake_target_path())
@@ -97,7 +97,14 @@ fn exec_attaches_scans_writes_and_verifies_via_target_stdout() {
         .args(["--exec", &script])
         .assert()
         .success()
-        .stdout(predicate::str::contains("1 match(es)").count(2))
+        // The value can also match a spilled copy in fake_target's memory, so check the
+        // known address's line rather than the number of matches.
+        .stdout(predicate::str::contains(format!(
+            "{address:#x} = {initial}"
+        )))
+        .stdout(predicate::str::contains(format!(
+            "{address:#x} = {new_value}"
+        )))
         .stdout(predicate::str::contains("no matches").not());
 
     let mut result_line = String::new();

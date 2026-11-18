@@ -717,10 +717,8 @@ fn new_scan(state: &mut AppState) -> Status {
 /// Stops the target (`Session::prepare_scan`) here, on the caller's thread, *before* handing the
 /// session to the background thread, and only resumes it (`Session::resume_after_scan`) back on
 /// the caller's thread once `Msg::PollScan` sees the result — never inside the background thread
-/// itself. Ptrace ties the tracer relationship to the specific thread that called
-/// `Session::attach` (this one, since attach/detach are never threaded); stopping or resuming
-/// from any other thread would send the signal fine but then hang forever in `waitpid` waiting
-/// for a stop notification only the tracer thread ever receives. `run` itself doesn't touch
+/// itself. Ptrace ties the stopped target to the thread that stopped it, and only that thread
+/// can resume it. `run` itself doesn't touch
 /// ptrace — only `/proc/<pid>/mem`, safe from any thread — so it's the only part actually moved
 /// off this one.
 fn spawn_scan(
