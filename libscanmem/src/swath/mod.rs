@@ -151,6 +151,34 @@ impl SwathStore {
         )
     }
 
+    /// Unmarks the matches at `indices` (0-indexed, as [`Self::nth_match`] counts them, in
+    /// ascending order), in one pass; returns how many were unmarked. Their bytes stay as filler:
+    /// an overlapping match may still need them as its old value, and the next narrowing drops
+    /// the ones no match covers.
+    pub fn clear_matches(&mut self, indices: impl IntoIterator<Item = usize>) -> usize {
+        let mut wanted = indices.into_iter().peekable();
+        let mut index = 0usize;
+        let mut cleared = 0usize;
+        for swath in &mut self.swaths {
+            for entry in &mut swath.entries {
+                if entry.flags.is_empty() {
+                    continue;
+                }
+                while wanted.next_if(|&w| w < index).is_some() {}
+                let Some(&next) = wanted.peek() else {
+                    return cleared;
+                };
+                if next == index {
+                    entry.flags = MatchFlags::empty();
+                    cleared += 1;
+                    wanted.next();
+                }
+                index += 1;
+            }
+        }
+        cleared
+    }
+
     /// Removes every recorded byte whose address falls in `[start, end)`, compacting the
     /// remaining bytes into (possibly fewer, possibly merged) swaths — replaces
     /// `delete_in_address_range`.

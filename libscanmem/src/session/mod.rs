@@ -342,6 +342,18 @@ impl Session {
         })
     }
 
+    /// Number of recorded matches; cheaper than counting [`Self::matches`], which decodes each
+    /// value.
+    pub fn match_count(&self) -> usize {
+        self.matches.match_count()
+    }
+
+    /// Removes the matches at `indices` (as [`Self::nth_match`] numbers them), in one pass;
+    /// returns how many were removed.
+    pub fn delete_matches(&mut self, indices: &std::collections::BTreeSet<usize>) -> usize {
+        self.matches.clear_matches(indices.iter().copied())
+    }
+
     /// Removes every recorded match in `range`, returning how many were removed.
     pub fn delete_in_range(&mut self, range: std::ops::Range<usize>) -> usize {
         let before = self.matches.match_count();

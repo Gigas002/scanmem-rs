@@ -142,9 +142,7 @@ pub fn run(mut state: AppState) {
 
 /// Refreshes the completer's view of how many matches are recorded, if any session is attached.
 fn update_match_count(state: &AppState, match_count: &Rc<Cell<usize>>) {
-    let count = state
-        .session()
-        .map_or(0, |session| session.matches().count());
+    let count = state.session().map_or(0, Session::match_count);
     match_count.set(count);
 }
 
@@ -216,7 +214,11 @@ fn list(state: &AppState, range: Option<std::ops::Range<usize>>) -> String {
     };
     match range {
         Some(range) => formatter::match_table(
-            range.filter_map(|index| session.nth_match(index).map(|view| (index, view))),
+            session
+                .matches()
+                .enumerate()
+                .skip(range.start)
+                .take(range.len()),
         ),
         None => formatter::match_table(session.matches().enumerate()),
     }
@@ -226,22 +228,9 @@ fn delete(state: &mut AppState, selector: &str) -> String {
     let Some(session) = state.session_mut() else {
         return not_attached();
     };
-    let size = session.matches().count();
+    let size = session.match_count();
     match libscanmem::sets::parse_index_set(selector, size) {
-        Ok(indices) => {
-            // Descending order so removing one match never invalidates the indices still queued.
-            let addresses: Vec<usize> = indices
-                .iter()
-                .rev()
-                .filter_map(|&index| session.nth_match(index))
-                .map(|view| view.address)
-                .collect();
-            let deleted = addresses
-                .into_iter()
-                .map(|address| session.delete_in_range(address..address + 1))
-                .sum();
-            formatter::deleted(deleted)
-        }
+        Ok(indices) => formatter::deleted(session.delete_matches(&indices)),
         Err(err) => formatter::error(err),
     }
 }

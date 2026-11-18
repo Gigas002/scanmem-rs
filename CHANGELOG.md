@@ -10,6 +10,9 @@ All notable changes to this project will be documented in this file.
   `i32` equal-to scan went from 3.1 s to 0.96 s, an any-number one from 7.9 s to 1.1 s, and a
   snapshot from 9.9 s to 3.0 s; peak memory for a scan with few matches went from 103 MiB to
   14 MiB. Results are unchanged.
+- scanmem: `delete` walked every match twice per index, so deleting 1000 of 1.5 million
+  matches took 48 s and `delete !0` didn't finish; both now take a single pass (milliseconds).
+  Counting matches after each command no longer decodes every value.
 
 ### Fixed
 

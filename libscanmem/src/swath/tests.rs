@@ -299,3 +299,20 @@ fn bytearray_text_reads_starting_from_a_non_zero_entry_index() {
     };
     assert_eq!(store.bytearray_text(location, 2).as_deref(), Some("02 03"));
 }
+
+#[test]
+fn clear_matches_unmarks_the_given_indices_and_keeps_their_bytes() {
+    let mut store = SwathStore::new();
+    store.add(100, 1, MatchFlags::U8);
+    store.add(101, 2, MatchFlags::empty());
+    store.add(102, 3, MatchFlags::U8);
+    store.add(200, 4, MatchFlags::U8);
+    store.add(201, 5, MatchFlags::U8);
+
+    assert_eq!(store.clear_matches([0, 2, 9]), 2);
+
+    let left: Vec<usize> = store.matches().map(|(address, _)| address).collect();
+    assert_eq!(left, vec![102, 201]);
+    // The bytes are still there for overlapping matches' old values.
+    assert_eq!(store.raw_iter().count(), 5);
+}
