@@ -65,7 +65,11 @@ fn attach_read_write_and_verify_via_target_stdout() {
 #[test]
 #[ignore = "spawns a target process; run manually with `--ignored`"]
 fn session_attach_scan_narrow_write_and_verify_via_target_stdout() {
+    // fake_target exits once it sees the value it waits for, so make that a final write after
+    // the narrowing scan; with the scanned value, it could exit before that scan.
+    let done_value = 0xcafe_f00d_u32;
     let mut child = Command::new(env!("CARGO_BIN_EXE_fake_target"))
+        .arg(format!("{done_value:x}"))
         .stdout(Stdio::piped())
         .spawn()
         .expect("failed to spawn fake_target");
@@ -113,6 +117,9 @@ fn session_attach_scan_narrow_write_and_verify_via_target_stdout() {
     assert!(stats.matches >= 1);
     assert!(session.matches().any(|m| m.address == address));
 
+    session
+        .write(address, &Value::U32(done_value))
+        .expect("final write failed");
     session.detach().expect("detach failed");
 
     let mut result_line = String::new();
@@ -123,7 +130,7 @@ fn session_attach_scan_narrow_write_and_verify_via_target_stdout() {
         .trim()
         .parse()
         .expect("fake_target did not print a valid value");
-    assert_eq!(observed, new_value);
+    assert_eq!(observed, done_value);
 
     let status = child.wait().expect("fake_target did not exit cleanly");
     assert!(status.success());
