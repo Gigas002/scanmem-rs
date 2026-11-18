@@ -397,6 +397,12 @@ impl Matcher {
         table
     }
 
+    /// For an equal-to match, which first bytes a match can start with; positions starting with
+    /// any other byte never match, so a scan can skip straight past them.
+    pub fn first_bytes(&self) -> Option<&[bool; 256]> {
+        self.first_bytes.as_deref()
+    }
+
     /// Tests the value at the start of `memory` (and, for match types that compare with the
     /// previous scan, `old`): the widest matching width and every width that matched, or `None`.
     #[inline]

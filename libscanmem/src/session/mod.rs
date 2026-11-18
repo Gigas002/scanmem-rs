@@ -588,6 +588,15 @@ impl<'a> Probe<'a> {
         }
     }
 
+    /// The first bytes a match can start with, when only some can (see
+    /// [`scanroutines::Matcher::first_bytes`]).
+    fn first_bytes(&self) -> Option<&[bool; 256]> {
+        match self {
+            Probe::Number(matcher) => matcher.first_bytes(),
+            _ => None,
+        }
+    }
+
     /// Tests the expression against `memory` at one position, optionally against `old` raw
     /// bytes recorded at that same position by a previous scan — returns the matched width in
     /// bytes and which flags to record, or `None` if nothing matched here.
@@ -638,7 +647,24 @@ fn scan_buffer_chunk(
     let mut results = Vec::new();
     let mut reach = 0usize;
     let mut group_start = 0usize;
-    for offset in 0..bytes.len() {
+    let first_bytes = probe.first_bytes();
+    let mut next = 0usize;
+    while next < bytes.len() {
+        let mut offset = next;
+        // Outside any match, jump to the next byte a match can start with: a tight loop over a
+        // table instead of a full test per byte.
+        if let Some(table) = first_bytes
+            && offset >= reach
+        {
+            match bytes[offset..]
+                .iter()
+                .position(|&byte| table[usize::from(byte)])
+            {
+                Some(skip) => offset += skip,
+                None => break,
+            }
+        }
+        next = offset + 1;
         let own_match = probe.test(&bytes[offset..], None, endianness);
         if own_match.is_none() && offset >= reach {
             continue;

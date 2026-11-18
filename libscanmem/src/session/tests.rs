@@ -673,3 +673,70 @@ fn narrowing_overlapping_string_matches_keeps_them_all() {
 
     assert_eq!(narrowed.iter().filter(|(_, _, f)| !f.is_empty()).count(), 2);
 }
+
+/// `scan_buffer_chunk` without the first-byte skip: a full test at every offset.
+fn scan_every_offset(bytes: &[u8], probe: &Probe<'_>) -> Vec<(usize, u8, MatchFlags)> {
+    let mut results = Vec::new();
+    let mut reach = 0usize;
+    for offset in 0..bytes.len() {
+        let own = probe.test(&bytes[offset..], None, Endianness::Native);
+        if own.is_none() && offset >= reach {
+            continue;
+        }
+        if let Some((width, _)) = own {
+            reach = reach.max(offset + width);
+        }
+        results.push((
+            0x1000 + offset,
+            bytes[offset],
+            own.map_or(MatchFlags::empty(), |(_, flags)| flags),
+        ));
+    }
+    results
+}
+
+#[test]
+fn skipping_by_first_byte_finds_what_testing_every_offset_finds() {
+    // Deterministic pseudo-random bytes, with values planted at odd offsets and overlapping.
+    let mut state = 0x2545_f491_4f6c_dd1du64;
+    let mut bytes: Vec<u8> = (0..4096)
+        .map(|_| {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            (state % 7) as u8
+        })
+        .collect();
+    for at in [0usize, 13, 14, 15, 1001, 4090] {
+        bytes[at..at + 4].copy_from_slice(&0x0102_0304i32.to_ne_bytes());
+    }
+    bytes[2000..2008].copy_from_slice(&(-0.0f64).to_ne_bytes());
+    bytes[3000..3004].copy_from_slice(&1.5f32.to_ne_bytes());
+
+    let exprs = [
+        (ScanDataType::Integer32, "16909060"),
+        (ScanDataType::AnyNumber, "16909060"),
+        (ScanDataType::AnyInteger, "3"),
+        (ScanDataType::Integer8, "0"),
+        (ScanDataType::AnyFloat, "0"),
+        (ScanDataType::AnyFloat, "1.5"),
+        (ScanDataType::Integer16, "-1"),
+    ];
+    for (data_type, literal) in exprs {
+        let number = parse_int(literal)
+            .or_else(|_| crate::value::parse_float(literal))
+            .unwrap();
+        let expr = ScanExpr {
+            data_type,
+            match_type: MatchType::EqualTo,
+            criterion: ScanCriterion::Value(UserValue::Number(number)),
+        };
+        let probe = Probe::new(&expr, Endianness::Native);
+        assert!(probe.first_bytes().is_some(), "{data_type:?}");
+        assert_eq!(
+            scan_buffer_chunk(0x1000, &bytes, &probe, Endianness::Native, usize::MAX),
+            scan_every_offset(&bytes, &probe),
+            "{data_type:?} = {literal}"
+        );
+    }
+}
