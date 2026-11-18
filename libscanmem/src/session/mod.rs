@@ -7,7 +7,7 @@ use crate::interrupt::{ScanProgress, StopFlag};
 use crate::maps::Region;
 use crate::process::Process;
 use crate::scanroutines::{self, Endianness, MatchType, ScanDataType};
-use crate::swath::{Swath, SwathEntry, SwathStore};
+use crate::swath::{Swath, SwathStore};
 use crate::value::{ByteOrWildcard, MatchFlags, NumberValue, UserValue, Value};
 
 /// A comparison value for a [`ScanExpr`].
@@ -436,27 +436,34 @@ impl Session {
         let process = self.process()?;
         let probe = Probe::new(expr, endianness);
         'swaths: for swath in old_swaths.swaths() {
-            // Chunked in whole match groups (see `batch_entries_end`) rather than read/tested in
-            // one call — after a broad snapshot, a single swath can be as large as an entire
-            // region, several GB in the worst case.
-            let mut batch_start = 0usize;
-            while batch_start < swath.entries.len() {
+            // Chunked — after a broad snapshot, a single swath can be as large as an entire
+            // region, several GB in the worst case. Each read reaches `window - 1` bytes past
+            // its chunk (within the swath), so a match near the end still sees its full width.
+            let len = swath.entries.len();
+            let mut reach = 0usize;
+            let mut start = 0usize;
+            while start < len {
                 if self.stop_flag.requested() {
                     break 'swaths;
                 }
-                let batch_end = batch_entries_end(&swath.entries, batch_start, SCAN_CHUNK_LEN);
-                let batch = Swath {
-                    first_byte_in_child: swath.address_of(batch_start),
-                    entries: swath.entries[batch_start..batch_end].to_vec(),
-                };
-                let len = batch.entries.len();
-                if let Ok(fresh) = process.read(batch.first_byte_in_child, len) {
-                    for (address, byte, flags) in narrow_swath(&batch, &fresh, &probe, endianness) {
-                        store.add(address, byte, flags);
-                    }
+                let end = (start + SCAN_CHUNK_LEN).min(len);
+                let read_end = (end + probe.window() - 1).min(len);
+                match process.read(swath.address_of(start), read_end - start) {
+                    Ok(fresh) => narrow_entries(
+                        swath,
+                        start..end,
+                        &fresh,
+                        &probe,
+                        endianness,
+                        &mut reach,
+                        |address, byte, flags| store.add(address, byte, flags),
+                    ),
+                    // Unreadable now: its matches are dropped, and so are the filler bytes of
+                    // any match before it that reached into it.
+                    Err(_) => reach = 0,
                 }
-                self.progress.add(len);
-                batch_start = batch_end;
+                self.progress.add(end - start);
+                start = end;
             }
         }
 
@@ -515,35 +522,6 @@ fn scan_region_chunked(
     true
 }
 
-/// Advances from match-group-aligned entry index `start` (i.e. `start == 0`, or a previous call's
-/// return value — `entries[start]` is always a group's own first byte, never a filler
-/// continuation) through whole groups until doing so would push the batch past `max_len` entries,
-/// always including at least the first whole group even if it alone exceeds `max_len` (never
-/// happens in practice — the widest group is 8 bytes, the widest scannable numeric value — but
-/// keeps this from ever getting stuck). Splitting [`narrow_scan`]'s read/re-test into
-/// [`SCAN_CHUNK_LEN`]-ish batches must never split a group in two: [`narrow_swath`] re-derives
-/// each match's old value from however many contiguous filler entries follow its first byte, so a
-/// group cut in half would silently shrink to whatever fraction landed in the first batch.
-fn batch_entries_end(entries: &[SwathEntry], start: usize, max_len: usize) -> usize {
-    debug_assert!(!entries[start].flags.is_empty());
-    let mut end = start;
-    loop {
-        // Always consume at least the first whole group regardless of `max_len` (see the doc
-        // comment above); after that, stop as soon as `max_len` is reached.
-        if end > start && end - start >= max_len {
-            break;
-        }
-        if end >= entries.len() {
-            break;
-        }
-        end += 1; // the group's own flagged byte
-        while end < entries.len() && entries[end].flags.is_empty() {
-            end += 1; // its filler continuation
-        }
-    }
-    end
-}
-
 /// Rejects an `expr` whose `data_type`/`match_type` needs a criterion it doesn't have.
 fn validate(expr: &ScanExpr) -> Result<()> {
     if expr.data_type == ScanDataType::ByteArray && expr.bytes_pattern().is_none() {
@@ -585,6 +563,16 @@ impl<'a> Probe<'a> {
                 expr.number(),
                 expr.range(),
             )),
+        }
+    }
+
+    /// How many bytes from a position the expression can look at: 8 for numbers (the widest
+    /// width), the pattern's length otherwise.
+    fn window(&self) -> usize {
+        match self {
+            Probe::Bytes(pattern) => pattern.len().max(1),
+            Probe::Str(pattern) => pattern.len().max(1),
+            Probe::Number(_) | Probe::Nothing => 8,
         }
     }
 
@@ -658,48 +646,65 @@ fn scan_buffer_chunk(
     results
 }
 
-/// Re-tests every previously matched position in `old_swath` against `fresh` (the same address
-/// range and length as `old_swath`, freshly read), returning `(address, byte, flags)` triples
-/// for a narrowed [`SwathStore`]. Does not discover new match starts — only positions that
-/// already matched are re-tested, matching narrowing-scan semantics.
-fn narrow_swath(
-    old_swath: &Swath,
+/// Re-tests the previously matched positions among `swath.entries[range]` against `fresh`
+/// (target memory from `range.start` on, reaching past `range.end` where the swath does) and
+/// emits `(address, byte, flags)` for a narrowed [`SwathStore`], in address order. Does not
+/// discover new match starts, and never adds a width: a numeric match keeps only the widths that
+/// matched before and still match.
+///
+/// Each match is tested on a full-width window of fresh bytes, with its old value read from the
+/// following recorded bytes whatever matches those belong to: overlapping matches share bytes.
+/// Bytes within the width of a surviving match are kept as filler, the same rule a first scan
+/// uses; `reach` (an entry index) carries that across the chunks of one swath.
+fn narrow_entries(
+    swath: &Swath,
+    range: std::ops::Range<usize>,
     fresh: &[u8],
     probe: &Probe<'_>,
     endianness: Endianness,
-) -> Vec<(usize, u8, MatchFlags)> {
-    let mut results = Vec::new();
-    let mut index = 0usize;
-    while index < old_swath.entries.len() {
-        if old_swath.entries[index].flags.is_empty() {
-            index += 1;
+    reach: &mut usize,
+    mut emit: impl FnMut(usize, u8, MatchFlags),
+) {
+    let entries = &swath.entries;
+    for index in range.clone() {
+        let Some(fresh_window) = fresh.get(index - range.start..) else {
+            break;
+        };
+        let Some(&fresh_byte) = fresh_window.first() else {
+            break;
+        };
+        let old_flags = entries[index].flags;
+        let own = if old_flags.is_empty() {
+            None
+        } else {
+            let mut old = [0u8; 8];
+            let old_len = (entries.len() - index).min(old.len());
+            for (slot, entry) in old.iter_mut().zip(&entries[index..index + old_len]) {
+                *slot = entry.old_value;
+            }
+            probe
+                .test(fresh_window, Some(&old[..old_len]), endianness)
+                .and_then(|(width, flags)| {
+                    if flags == MatchFlags::all() {
+                        // A byte-array or string match: no widths to narrow.
+                        return Some((width, flags));
+                    }
+                    let kept = flags & old_flags;
+                    (!kept.is_empty()).then(|| (kept.max_width(), kept))
+                })
+        };
+        if own.is_none() && index >= *reach {
             continue;
         }
-
-        let start = index;
-        let mut end = index + 1;
-        while end < old_swath.entries.len() && old_swath.entries[end].flags.is_empty() {
-            end += 1;
+        if let Some((width, _)) = own {
+            *reach = (*reach).max(index + width);
         }
-        let address = old_swath.address_of(start);
-        let old_bytes: Vec<u8> = old_swath.entries[start..end]
-            .iter()
-            .map(|entry| entry.old_value)
-            .collect();
-
-        if let Some(fresh_window) = fresh.get(start..end)
-            && let Some((matched_width, flags)) =
-                probe.test(fresh_window, Some(&old_bytes), endianness)
-        {
-            for (i, &byte) in fresh_window[..matched_width].iter().enumerate() {
-                let entry_flags = if i == 0 { flags } else { MatchFlags::empty() };
-                results.push((address + i, byte, entry_flags));
-            }
-        }
-
-        index = end;
+        emit(
+            swath.address_of(index),
+            fresh_byte,
+            own.map_or(MatchFlags::empty(), |(_, flags)| flags),
+        );
     }
-    results
 }
 
 /// Reconstructs the full-width [`Value`] a match's raw `bytes` (as returned by

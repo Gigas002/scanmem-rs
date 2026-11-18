@@ -13,6 +13,11 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- Narrowing lost most matches whose bytes overlapped the next match: each match was
+  re-tested only on its bytes up to the next match's start, so `scan i32 = 0` repeated on
+  unchanged memory went from 3.77 million matches to 121 thousand. Matches are now tested on
+  their full width (old bytes included), narrowing never adds a width that didn't match
+  before, and an overlapped match shows its full value (an f64 was listed as an integer).
 - An attached process froze on the first signal it received (SIGCHLD, SIGALRM, a terminal
   resize, Ctrl-C), never got that signal, and stayed stopped after scanmem or gameconqueror
   quit. Attaching no longer makes the target a ptrace tracee: it is only stopped, with

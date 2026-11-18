@@ -125,22 +125,24 @@ impl SwathStore {
             })
     }
 
-    /// The raw bytes a match spans: its own byte at `location`, plus every immediately following
-    /// contiguity-filler byte (empty [`MatchFlags`]) in the same swath — reconstructs a
-    /// multi-byte match's full recorded value from storage that otherwise only keeps one flagged
-    /// byte per match. Mirrors the exact grouping `narrow_swath` (in `session`) already uses to
-    /// re-test a match's old bytes, so the two never disagree about which bytes belong together.
-    /// `None` if `location` is out of bounds.
+    /// The raw bytes a match spans, from its own byte at `location`. For a numeric match that is
+    /// its widest flagged width; the bytes after the first may also belong to other matches
+    /// that start inside it (overlapping matches share bytes). For a byte-array or string match
+    /// (every flag set, no width recorded), it is the byte plus the contiguity-filler bytes
+    /// (empty [`MatchFlags`]) that follow it. `None` if `location` is out of bounds.
     pub fn match_bytes(&self, location: MatchLocation) -> Option<Vec<u8>> {
         let swath = self.swaths.get(location.swath_index)?;
         let start = location.entry_index;
-        if start >= swath.entries.len() {
-            return None;
-        }
-        let mut end = start + 1;
-        while end < swath.entries.len() && swath.entries[end].flags.is_empty() {
-            end += 1;
-        }
+        let flags = swath.entries.get(start)?.flags;
+        let end = if flags != MatchFlags::all() && !flags.is_empty() {
+            (start + flags.max_width()).min(swath.entries.len())
+        } else {
+            let mut end = start + 1;
+            while end < swath.entries.len() && swath.entries[end].flags.is_empty() {
+                end += 1;
+            }
+            end
+        };
         Some(
             swath.entries[start..end]
                 .iter()
