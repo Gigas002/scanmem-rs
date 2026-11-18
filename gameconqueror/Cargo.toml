@@ -3,7 +3,6 @@ name = "gameconqueror"
 version.workspace = true
 edition.workspace = true
 license = "GPL-3.0-or-later"
-homepage.workspace = true
 description = "Terminal UI front-end for libscanmem"
 keywords.workspace = true
 repository.workspace = true
