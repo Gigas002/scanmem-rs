@@ -573,6 +573,7 @@ name = "gameconqueror"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "libc",
  "libscanmem",
  "ratatui",
  "rustix",

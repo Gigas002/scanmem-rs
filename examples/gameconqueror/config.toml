@@ -13,9 +13,10 @@
 # Default: warn
 log-level = "warn"
 
-# Where the file-only log sink writes to. Default: $TMPDIR/gameconqueror.log (usually
-# /tmp/gameconqueror.log).
-# log-file = "/tmp/gameconqueror.log"
+# Where the file-only log sink writes to (an absolute path; `~` isn't expanded). Default:
+# $XDG_STATE_HOME/gameconqueror/gameconqueror.log, usually
+# ~/.local/state/gameconqueror/gameconqueror.log.
+# log-file = "/home/me/gameconqueror.log"
 
 # How often (in milliseconds) the event loop wakes up with no key pressed — rewrites frozen
 # cheats and polls a background scan's progress. Lower is more responsive (smoother progress

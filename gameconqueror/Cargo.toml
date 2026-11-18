@@ -10,6 +10,7 @@ repository.workspace = true
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
+libc = "0.2"
 libscanmem = { path = "../libscanmem", version = "0.1.0" }
 ratatui = { version = "0.30", optional = true }
 rustix = { version = "1", features = ["process"] }

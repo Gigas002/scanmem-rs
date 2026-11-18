@@ -21,6 +21,11 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- gameconqueror: the default log moved from the shared `/tmp/gameconqueror.log` to
+  `$XDG_STATE_HOME/gameconqueror/gameconqueror.log` (usually
+  `~/.local/state/gameconqueror/`). Run as root (as the docs suggest), it opened a file in a
+  world-writable directory that another user could have created first. The log is now created
+  `0600` in a `0700` directory, and a symlink in its place is refused.
 - Attach and ptrace errors say what happened: a refused attach explains `ptrace_scope` (it
   was "Permission denied (os error 13)"), a missing process is "no such process", and a target
   that exited is "the target process has exited" (it was "ptrace failed (errno 1)" or "No such

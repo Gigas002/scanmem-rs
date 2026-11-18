@@ -37,7 +37,8 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             pid: None,
-            log_file: std::env::temp_dir().join("gameconqueror.log"),
+            log_file: state_dir(std::env::var_os("XDG_STATE_HOME"), std::env::var_os("HOME"))
+                .join("gameconqueror.log"),
             log_level: LevelFilter::WARN,
             poll_interval_ms: 100,
             hex_view_buffer_len: 256,
@@ -46,6 +47,21 @@ impl Default for Settings {
             #[cfg(feature = "config")]
             theme: crate::theme::FileTheme::default(),
         }
+    }
+}
+
+/// `$XDG_STATE_HOME/gameconqueror`, or `~/.local/state/gameconqueror`: where the log goes by
+/// default. Not the shared temp directory, where another user could create the file first (a
+/// symlink, or a file of theirs) and gameconqueror, often run as root, would write into it.
+pub(crate) fn state_dir(
+    xdg_state_home: Option<std::ffi::OsString>,
+    home: Option<std::ffi::OsString>,
+) -> PathBuf {
+    match xdg_state_home.filter(|dir| PathBuf::from(dir).is_absolute()) {
+        Some(dir) => PathBuf::from(dir).join("gameconqueror"),
+        None => home
+            .map_or_else(|| PathBuf::from("."), PathBuf::from)
+            .join(".local/state/gameconqueror"),
     }
 }
 
