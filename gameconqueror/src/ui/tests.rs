@@ -946,3 +946,24 @@ fn match_view_scrolls_like_a_table_state() {
     assert_eq!(scroll_offset(40, 2, 5, 3), 0);
     assert_eq!(scroll_offset(40, 0, 5, 0), 0);
 }
+
+#[test]
+fn ticks_stay_on_schedule_and_skip_the_ones_missed() {
+    use std::time::{Duration, Instant};
+
+    use super::next_tick_after;
+
+    let start = Instant::now();
+    let interval = Duration::from_millis(100);
+    // On time, or a little late: the next tick keeps the grid.
+    assert_eq!(next_tick_after(start, start, interval), start + interval);
+    assert_eq!(
+        next_tick_after(start, start + Duration::from_millis(30), interval),
+        start + interval
+    );
+    // A frame that took 350 ms: one tick ran, the next is a full interval away.
+    assert_eq!(
+        next_tick_after(start, start + Duration::from_millis(350), interval),
+        start + Duration::from_millis(450)
+    );
+}

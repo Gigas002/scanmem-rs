@@ -21,6 +21,9 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- gameconqueror: frozen cheats were rewritten only when no key arrived for a whole poll
+  interval, so holding a key (scrolling the match list) stopped them being rewritten. The
+  rewrite now runs on schedule.
 - gameconqueror: the default log moved from the shared `/tmp/gameconqueror.log` to
   `$XDG_STATE_HOME/gameconqueror/gameconqueror.log` (usually
   `~/.local/state/gameconqueror/`). Run as root (as the docs suggest), it opened a file in a
