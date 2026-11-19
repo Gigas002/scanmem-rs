@@ -929,3 +929,41 @@ fn theme_resolve_does_not_panic_regardless_of_the_live_terminal_state() {
     #[cfg(not(feature = "config"))]
     theme::Theme::resolve().expect("always valid");
 }
+
+#[test]
+fn match_view_scrolls_like_a_table_state() {
+    use crate::ui::match_view::scroll_offset;
+    // Selection within the window: unchanged.
+    assert_eq!(scroll_offset(10, 12, 5, 100), 10);
+    // Moving below the window scrolls by just enough.
+    assert_eq!(scroll_offset(10, 15, 5, 100), 11);
+    // Moving above it scrolls up to the selection.
+    assert_eq!(scroll_offset(10, 3, 5, 100), 3);
+    // Wrapping from the last row to the first, and back.
+    assert_eq!(scroll_offset(95, 0, 5, 100), 0);
+    assert_eq!(scroll_offset(0, 99, 5, 100), 95);
+    // A list shorter than the window, or emptied by a new scan, starts at 0.
+    assert_eq!(scroll_offset(40, 2, 5, 3), 0);
+    assert_eq!(scroll_offset(40, 0, 5, 0), 0);
+}
+
+#[test]
+fn ticks_stay_on_schedule_and_skip_the_ones_missed() {
+    use std::time::{Duration, Instant};
+
+    use super::next_tick_after;
+
+    let start = Instant::now();
+    let interval = Duration::from_millis(100);
+    // On time, or a little late: the next tick keeps the grid.
+    assert_eq!(next_tick_after(start, start, interval), start + interval);
+    assert_eq!(
+        next_tick_after(start, start + Duration::from_millis(30), interval),
+        start + interval
+    );
+    // A frame that took 350 ms: one tick ran, the next is a full interval away.
+    assert_eq!(
+        next_tick_after(start, start + Duration::from_millis(350), interval),
+        start + Duration::from_millis(450)
+    );
+}

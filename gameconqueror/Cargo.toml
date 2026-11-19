@@ -3,14 +3,14 @@ name = "gameconqueror"
 version.workspace = true
 edition.workspace = true
 license = "GPL-3.0-or-later"
-homepage.workspace = true
 description = "Terminal UI front-end for libscanmem"
 keywords.workspace = true
 repository.workspace = true
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
-libscanmem = { path = "../libscanmem", version = "0.1.0" }
+libc = "0.2"
+libscanmem = { path = "../libscanmem", version = "0.2.0" }
 ratatui = { version = "0.30", optional = true }
 rustix = { version = "1", features = ["process"] }
 serde = { version = "1", features = ["derive"], optional = true }

@@ -3,14 +3,14 @@ name = "scanmem"
 version.workspace = true
 edition.workspace = true
 license = "GPL-3.0-or-later"
-homepage.workspace = true
 description = "Interactive CLI front-end for libscanmem"
 keywords.workspace = true
 repository.workspace = true
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
-libscanmem = { path = "../libscanmem", version = "0.1.0" }
+# `signals`: Ctrl-C cancels a running scan instead of ending the REPL.
+libscanmem = { path = "../libscanmem", version = "0.2.0", features = ["signals"] }
 rustix = { version = "1", features = ["process"] }
 rustyline = { version = "19", default-features = false, features = ["custom-bindings"] }
 thiserror = { workspace = true }

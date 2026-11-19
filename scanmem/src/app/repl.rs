@@ -88,6 +88,16 @@ pub(super) fn first_word(line: &str) -> &str {
 
 /// Runs the interactive loop against `state` until the user quits or stdin closes.
 pub fn run(mut state: AppState) {
+    let interrupt = match state.cancel_scans_on_ctrl_c() {
+        Ok(flag) => Some(flag),
+        Err(err) => {
+            eprintln!(
+                "{}",
+                formatter::error(format!("Ctrl-C won't cancel scans: {err}"))
+            );
+            None
+        }
+    };
     let match_count = Rc::new(Cell::new(0));
     let mut editor =
         Editor::<ScanmemHelper, DefaultHistory>::new().expect("failed to initialize line editor");
@@ -107,6 +117,10 @@ pub fn run(mut state: AppState) {
                     Ok(command) => {
                         println!("{}", dispatch(&mut state, command));
                         update_match_count(&state, &match_count);
+                        // A Ctrl-C during this command is spent; the next one starts fresh.
+                        if let Some(flag) = &interrupt {
+                            flag.reset();
+                        }
                     }
                     Err(err) => eprintln!("{}", formatter::error(err)),
                 }
@@ -128,9 +142,7 @@ pub fn run(mut state: AppState) {
 
 /// Refreshes the completer's view of how many matches are recorded, if any session is attached.
 fn update_match_count(state: &AppState, match_count: &Rc<Cell<usize>>) {
-    let count = state
-        .session()
-        .map_or(0, |session| session.matches().count());
+    let count = state.session().map_or(0, Session::match_count);
     match_count.set(count);
 }
 
@@ -141,10 +153,12 @@ pub(super) fn dispatch(state: &mut AppState, command: Command) -> String {
     match command {
         Command::Attach(pid) => attach(state, pid),
         Command::Scan(expr) => with_session(state, |session| {
-            session.scan(&expr).map(formatter::scan_stats)
+            let stats = session.scan(&expr)?;
+            Ok(scan_result(session, stats))
         }),
         Command::Snapshot => with_session(state, |session| {
-            session.snapshot().map(formatter::scan_stats)
+            let stats = session.snapshot()?;
+            Ok(scan_result(session, stats))
         }),
         Command::List(range) => list(state, range),
         Command::Dump { address, len } => with_session(state, |session| {
@@ -168,6 +182,19 @@ pub(super) fn dispatch(state: &mut AppState, command: Command) -> String {
     }
 }
 
+/// The match count, noting when Ctrl-C stopped the scan before it covered everything.
+fn scan_result(session: &Session, stats: libscanmem::session::ScanStats) -> String {
+    let text = formatter::scan_stats(stats);
+    if session.stop_handle().requested() {
+        format!(
+            "{text} {}",
+            formatter::info("(stopped early: partial results)")
+        )
+    } else {
+        text
+    }
+}
+
 fn attach(state: &mut AppState, pid: u32) -> String {
     let Some(pid) = rustix::process::Pid::from_raw(pid as i32) else {
         return formatter::error("pid must not be zero");
@@ -187,7 +214,11 @@ fn list(state: &AppState, range: Option<std::ops::Range<usize>>) -> String {
     };
     match range {
         Some(range) => formatter::match_table(
-            range.filter_map(|index| session.nth_match(index).map(|view| (index, view))),
+            session
+                .matches()
+                .enumerate()
+                .skip(range.start)
+                .take(range.len()),
         ),
         None => formatter::match_table(session.matches().enumerate()),
     }
@@ -197,22 +228,9 @@ fn delete(state: &mut AppState, selector: &str) -> String {
     let Some(session) = state.session_mut() else {
         return not_attached();
     };
-    let size = session.matches().count();
+    let size = session.match_count();
     match libscanmem::sets::parse_index_set(selector, size) {
-        Ok(indices) => {
-            // Descending order so removing one match never invalidates the indices still queued.
-            let addresses: Vec<usize> = indices
-                .iter()
-                .rev()
-                .filter_map(|&index| session.nth_match(index))
-                .map(|view| view.address)
-                .collect();
-            let deleted = addresses
-                .into_iter()
-                .map(|address| session.delete_in_range(address..address + 1))
-                .sum();
-            formatter::deleted(deleted)
-        }
+        Ok(indices) => formatter::deleted(session.delete_matches(&indices)),
         Err(err) => formatter::error(err),
     }
 }

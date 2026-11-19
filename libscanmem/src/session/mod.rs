@@ -7,7 +7,7 @@ use crate::interrupt::{ScanProgress, StopFlag};
 use crate::maps::Region;
 use crate::process::Process;
 use crate::scanroutines::{self, Endianness, MatchType, ScanDataType};
-use crate::swath::{Swath, SwathEntry, SwathStore};
+use crate::swath::{Swath, SwathStore};
 use crate::value::{ByteOrWildcard, MatchFlags, NumberValue, UserValue, Value};
 
 /// A comparison value for a [`ScanExpr`].
@@ -144,7 +144,8 @@ pub struct Session {
 }
 
 impl Session {
-    /// Attaches to `pid` — replaces `sm_attach`.
+    /// Attaches to `pid` — replaces `sm_attach`. The target keeps running; it is only stopped
+    /// during a scan (see [`Process`]).
     pub fn attach(pid: Pid) -> Result<Self> {
         Ok(Self {
             process: Some(Process::attach(pid)?),
@@ -155,8 +156,8 @@ impl Session {
         })
     }
 
-    /// Detaches, resuming the target's execution — replaces `sm_detach`. Further operations on
-    /// this `Session` fail with [`ScanmemError::NotAttached`].
+    /// Detaches — replaces `sm_detach`. Further operations on this `Session` fail with
+    /// [`ScanmemError::NotAttached`]. Dropping the `Session` detaches too.
     pub fn detach(&mut self) -> Result<()> {
         let process = self.process.take().ok_or(ScanmemError::NotAttached)?;
         process.detach()
@@ -173,6 +174,12 @@ impl Session {
     /// another thread — same before-the-move caveat as [`Self::progress_handle`].
     pub fn stop_handle(&self) -> StopFlag {
         self.stop_flag.clone()
+    }
+
+    /// Uses `flag` as this session's stop flag from now on, e.g. one that a `SIGINT` handler
+    /// sets (see [`StopFlag::register_sigint`]).
+    pub fn set_stop_handle(&mut self, flag: StopFlag) {
+        self.stop_flag = flag;
     }
 
     /// Runs a first scan (if no matches are currently recorded) or narrows the current matches
@@ -201,21 +208,16 @@ impl Session {
     }
 
     /// Stops the target (see [`Process::stop`]) ahead of a scan/snapshot and resets the abort
-    /// flag. Must be called on the same thread that called [`Self::attach`]: ptrace ties the
-    /// tracer relationship to the specific calling *thread*, not the whole process, so the
-    /// `waitpid` this performs to confirm the stop would otherwise never observe it (the tracee
-    /// stays stopped, but the wrong thread's call hangs forever waiting for a notification that
-    /// only the tracer thread receives). Pair with [`Self::run_scan`]/[`Self::run_snapshot`]
-    /// (safe to run on any thread) and [`Self::resume_after_scan`] (same thread-affinity
-    /// requirement as this method).
+    /// flag. Pair with [`Self::run_scan`]/[`Self::run_snapshot`] (safe to run on any thread) and
+    /// [`Self::resume_after_scan`], which must run on the same thread as this method: ptrace ties
+    /// the tracee to the thread that stopped it, and only that thread can resume it.
     pub fn prepare_scan(&mut self) -> Result<()> {
         self.stop_flag.reset();
         self.process()?.stop()
     }
 
     /// Resumes the target after [`Self::prepare_scan`] (and a [`Self::run_scan`]/
-    /// [`Self::run_snapshot`] in between) — same same-thread-as-[`Self::attach`] requirement as
-    /// [`Self::prepare_scan`]. Errors (e.g. the target having exited mid-scan) are swallowed:
+    /// [`Self::run_snapshot`] in between), on the thread that called [`Self::prepare_scan`]. Errors (e.g. the target having exited mid-scan) are swallowed:
     /// there is nothing a caller already past the scan can usefully do about a resume failure.
     pub fn resume_after_scan(&self) {
         if let Ok(process) = self.process() {
@@ -340,6 +342,18 @@ impl Session {
         })
     }
 
+    /// Number of recorded matches; cheaper than counting [`Self::matches`], which decodes each
+    /// value.
+    pub fn match_count(&self) -> usize {
+        self.matches.match_count()
+    }
+
+    /// Removes the matches at `indices` (as [`Self::nth_match`] numbers them), in one pass;
+    /// returns how many were removed.
+    pub fn delete_matches(&mut self, indices: &std::collections::BTreeSet<usize>) -> usize {
+        self.matches.clear_matches(indices.iter().copied())
+    }
+
     /// Removes every recorded match in `range`, returning how many were removed.
     pub fn delete_in_range(&mut self, range: std::ops::Range<usize>) -> usize {
         let before = self.matches.match_count();
@@ -432,28 +446,36 @@ impl Session {
 
         let mut store = SwathStore::new();
         let process = self.process()?;
+        let probe = Probe::new(expr, endianness);
         'swaths: for swath in old_swaths.swaths() {
-            // Chunked in whole match groups (see `batch_entries_end`) rather than read/tested in
-            // one call — after a broad snapshot, a single swath can be as large as an entire
-            // region, several GB in the worst case.
-            let mut batch_start = 0usize;
-            while batch_start < swath.entries.len() {
+            // Chunked — after a broad snapshot, a single swath can be as large as an entire
+            // region, several GB in the worst case. Each read reaches `window - 1` bytes past
+            // its chunk (within the swath), so a match near the end still sees its full width.
+            let len = swath.entries.len();
+            let mut reach = 0usize;
+            let mut start = 0usize;
+            while start < len {
                 if self.stop_flag.requested() {
                     break 'swaths;
                 }
-                let batch_end = batch_entries_end(&swath.entries, batch_start, SCAN_CHUNK_LEN);
-                let batch = Swath {
-                    first_byte_in_child: swath.address_of(batch_start),
-                    entries: swath.entries[batch_start..batch_end].to_vec(),
-                };
-                let len = batch.entries.len();
-                if let Ok(fresh) = process.read(batch.first_byte_in_child, len) {
-                    for (address, byte, flags) in narrow_swath(&batch, &fresh, expr, endianness) {
-                        store.add(address, byte, flags);
-                    }
+                let end = (start + SCAN_CHUNK_LEN).min(len);
+                let read_end = (end + probe.window() - 1).min(len);
+                match process.read(swath.address_of(start), read_end - start) {
+                    Ok(fresh) => narrow_entries(
+                        swath,
+                        start..end,
+                        &fresh,
+                        &probe,
+                        endianness,
+                        &mut reach,
+                        |address, byte, flags| store.add(address, byte, flags),
+                    ),
+                    // Unreadable now: its matches are dropped, and so are the filler bytes of
+                    // any match before it that reached into it.
+                    Err(_) => reach = 0,
                 }
-                self.progress.add(len);
-                batch_start = batch_end;
+                self.progress.add(end - start);
+                start = end;
             }
         }
 
@@ -489,6 +511,7 @@ fn scan_region_chunked(
     store: &mut SwathStore,
 ) -> bool {
     let overlap = expr.max_match_width().saturating_sub(1);
+    let probe = Probe::new(expr, endianness);
     let mut offset = 0usize;
     while offset < region.size() {
         if stop_flag.requested() {
@@ -500,7 +523,7 @@ fn scan_region_chunked(
 
         if let Ok(bytes) = process.read(chunk_start, read_len) {
             for (address, byte, flags) in
-                scan_buffer_chunk(chunk_start, &bytes, expr, endianness, chunk_len)
+                scan_buffer_chunk(chunk_start, &bytes, &probe, endianness, chunk_len)
             {
                 store.add(address, byte, flags);
             }
@@ -509,35 +532,6 @@ fn scan_region_chunked(
         offset += chunk_len;
     }
     true
-}
-
-/// Advances from match-group-aligned entry index `start` (i.e. `start == 0`, or a previous call's
-/// return value — `entries[start]` is always a group's own first byte, never a filler
-/// continuation) through whole groups until doing so would push the batch past `max_len` entries,
-/// always including at least the first whole group even if it alone exceeds `max_len` (never
-/// happens in practice — the widest group is 8 bytes, the widest scannable numeric value — but
-/// keeps this from ever getting stuck). Splitting [`narrow_scan`]'s read/re-test into
-/// [`SCAN_CHUNK_LEN`]-ish batches must never split a group in two: [`narrow_swath`] re-derives
-/// each match's old value from however many contiguous filler entries follow its first byte, so a
-/// group cut in half would silently shrink to whatever fraction landed in the first batch.
-fn batch_entries_end(entries: &[SwathEntry], start: usize, max_len: usize) -> usize {
-    debug_assert!(!entries[start].flags.is_empty());
-    let mut end = start;
-    loop {
-        // Always consume at least the first whole group regardless of `max_len` (see the doc
-        // comment above); after that, stop as soon as `max_len` is reached.
-        if end > start && end - start >= max_len {
-            break;
-        }
-        if end >= entries.len() {
-            break;
-        }
-        end += 1; // the group's own flagged byte
-        while end < entries.len() && entries[end].flags.is_empty() {
-            end += 1; // its filler continuation
-        }
-    }
-    end
 }
 
 /// Rejects an `expr` whose `data_type`/`match_type` needs a criterion it doesn't have.
@@ -560,35 +554,70 @@ fn validate(expr: &ScanExpr) -> Result<()> {
     Ok(())
 }
 
-/// Tests `expr` against `memory` at one position, optionally against `old` raw bytes recorded
-/// at that same position by a previous scan — returns the matched width in bytes and which
-/// flags to record, or `None` if nothing matched here.
-fn probe(
-    memory: &[u8],
-    expr: &ScanExpr,
-    old: Option<&[u8]>,
-    endianness: Endianness,
-) -> Option<(usize, MatchFlags)> {
-    match expr.data_type {
-        ScanDataType::ByteArray => {
-            let pattern = expr.bytes_pattern()?;
-            scanroutines::scan_bytearray(memory, pattern).map(|width| (width, MatchFlags::all()))
-        }
-        ScanDataType::String => {
-            let pattern = expr.string_pattern()?;
-            scanroutines::scan_string(memory, pattern).map(|width| (width, MatchFlags::all()))
-        }
-        _ => {
-            let old_number = old.map(|bytes| scanroutines::decode_number(bytes, endianness));
-            scanroutines::scan(
-                memory,
+/// `expr` prepared once per scan, so testing a position doesn't redo per-scan work.
+enum Probe<'a> {
+    Bytes(&'a [ByteOrWildcard]),
+    Str(&'a str),
+    Number(scanroutines::Matcher),
+    /// A byte/string scan without its pattern; `validate` rejects these first.
+    Nothing,
+}
+
+impl<'a> Probe<'a> {
+    fn new(expr: &'a ScanExpr, endianness: Endianness) -> Self {
+        match expr.data_type {
+            ScanDataType::ByteArray => expr.bytes_pattern().map_or(Probe::Nothing, Probe::Bytes),
+            ScanDataType::String => expr.string_pattern().map_or(Probe::Nothing, Probe::Str),
+            _ => Probe::Number(scanroutines::Matcher::new(
                 expr.data_type,
                 expr.match_type,
                 endianness,
-                old_number.as_ref(),
                 expr.number(),
                 expr.range(),
-            )
+            )),
+        }
+    }
+
+    /// How many bytes from a position the expression can look at: 8 for numbers (the widest
+    /// width), the pattern's length otherwise.
+    fn window(&self) -> usize {
+        match self {
+            Probe::Bytes(pattern) => pattern.len().max(1),
+            Probe::Str(pattern) => pattern.len().max(1),
+            Probe::Number(_) | Probe::Nothing => 8,
+        }
+    }
+
+    /// The first bytes a match can start with, when only some can (see
+    /// [`scanroutines::Matcher::first_bytes`]).
+    fn first_bytes(&self) -> Option<&[bool; 256]> {
+        match self {
+            Probe::Number(matcher) => matcher.first_bytes(),
+            _ => None,
+        }
+    }
+
+    /// Tests the expression against `memory` at one position, optionally against `old` raw
+    /// bytes recorded at that same position by a previous scan — returns the matched width in
+    /// bytes and which flags to record, or `None` if nothing matched here.
+    #[inline]
+    fn test(
+        &self,
+        memory: &[u8],
+        old: Option<&[u8]>,
+        endianness: Endianness,
+    ) -> Option<(usize, MatchFlags)> {
+        match self {
+            Probe::Bytes(pattern) => scanroutines::scan_bytearray(memory, pattern)
+                .map(|width| (width, MatchFlags::all())),
+            Probe::Str(pattern) => {
+                scanroutines::scan_string(memory, pattern).map(|width| (width, MatchFlags::all()))
+            }
+            Probe::Number(matcher) => {
+                let old_number = old.map(|bytes| scanroutines::decode_number(bytes, endianness));
+                matcher.test(memory, old_number.as_ref())
+            }
+            Probe::Nothing => None,
         }
     }
 }
@@ -611,18 +640,32 @@ fn probe(
 fn scan_buffer_chunk(
     base: usize,
     bytes: &[u8],
-    expr: &ScanExpr,
+    probe: &Probe<'_>,
     endianness: Endianness,
     keep_before: usize,
 ) -> Vec<(usize, u8, MatchFlags)> {
-    let own: Vec<Option<(usize, MatchFlags)>> = (0..bytes.len())
-        .map(|offset| probe(&bytes[offset..], expr, None, endianness))
-        .collect();
-
     let mut results = Vec::new();
     let mut reach = 0usize;
     let mut group_start = 0usize;
-    for (offset, &own_match) in own.iter().enumerate() {
+    let first_bytes = probe.first_bytes();
+    let mut next = 0usize;
+    while next < bytes.len() {
+        let mut offset = next;
+        // Outside any match, jump to the next byte a match can start with: a tight loop over a
+        // table instead of a full test per byte.
+        if let Some(table) = first_bytes
+            && offset >= reach
+        {
+            match bytes[offset..]
+                .iter()
+                .position(|&byte| table[usize::from(byte)])
+            {
+                Some(skip) => offset += skip,
+                None => break,
+            }
+        }
+        next = offset + 1;
+        let own_match = probe.test(&bytes[offset..], None, endianness);
         if own_match.is_none() && offset >= reach {
             continue;
         }
@@ -641,48 +684,65 @@ fn scan_buffer_chunk(
     results
 }
 
-/// Re-tests every previously matched position in `old_swath` against `fresh` (the same address
-/// range and length as `old_swath`, freshly read), returning `(address, byte, flags)` triples
-/// for a narrowed [`SwathStore`]. Does not discover new match starts — only positions that
-/// already matched are re-tested, matching narrowing-scan semantics.
-fn narrow_swath(
-    old_swath: &Swath,
+/// Re-tests the previously matched positions among `swath.entries[range]` against `fresh`
+/// (target memory from `range.start` on, reaching past `range.end` where the swath does) and
+/// emits `(address, byte, flags)` for a narrowed [`SwathStore`], in address order. Does not
+/// discover new match starts, and never adds a width: a numeric match keeps only the widths that
+/// matched before and still match.
+///
+/// Each match is tested on a full-width window of fresh bytes, with its old value read from the
+/// following recorded bytes whatever matches those belong to: overlapping matches share bytes.
+/// Bytes within the width of a surviving match are kept as filler, the same rule a first scan
+/// uses; `reach` (an entry index) carries that across the chunks of one swath.
+fn narrow_entries(
+    swath: &Swath,
+    range: std::ops::Range<usize>,
     fresh: &[u8],
-    expr: &ScanExpr,
+    probe: &Probe<'_>,
     endianness: Endianness,
-) -> Vec<(usize, u8, MatchFlags)> {
-    let mut results = Vec::new();
-    let mut index = 0usize;
-    while index < old_swath.entries.len() {
-        if old_swath.entries[index].flags.is_empty() {
-            index += 1;
+    reach: &mut usize,
+    mut emit: impl FnMut(usize, u8, MatchFlags),
+) {
+    let entries = &swath.entries;
+    for index in range.clone() {
+        let Some(fresh_window) = fresh.get(index - range.start..) else {
+            break;
+        };
+        let Some(&fresh_byte) = fresh_window.first() else {
+            break;
+        };
+        let old_flags = entries[index].flags;
+        let own = if old_flags.is_empty() {
+            None
+        } else {
+            let mut old = [0u8; 8];
+            let old_len = (entries.len() - index).min(old.len());
+            for (slot, entry) in old.iter_mut().zip(&entries[index..index + old_len]) {
+                *slot = entry.old_value;
+            }
+            probe
+                .test(fresh_window, Some(&old[..old_len]), endianness)
+                .and_then(|(width, flags)| {
+                    if flags == MatchFlags::all() {
+                        // A byte-array or string match: no widths to narrow.
+                        return Some((width, flags));
+                    }
+                    let kept = flags & old_flags;
+                    (!kept.is_empty()).then(|| (kept.max_width(), kept))
+                })
+        };
+        if own.is_none() && index >= *reach {
             continue;
         }
-
-        let start = index;
-        let mut end = index + 1;
-        while end < old_swath.entries.len() && old_swath.entries[end].flags.is_empty() {
-            end += 1;
+        if let Some((width, _)) = own {
+            *reach = (*reach).max(index + width);
         }
-        let address = old_swath.address_of(start);
-        let old_bytes: Vec<u8> = old_swath.entries[start..end]
-            .iter()
-            .map(|entry| entry.old_value)
-            .collect();
-
-        if let Some(fresh_window) = fresh.get(start..end)
-            && let Some((matched_width, flags)) =
-                probe(fresh_window, expr, Some(&old_bytes), endianness)
-        {
-            for (i, &byte) in fresh_window[..matched_width].iter().enumerate() {
-                let entry_flags = if i == 0 { flags } else { MatchFlags::empty() };
-                results.push((address + i, byte, entry_flags));
-            }
-        }
-
-        index = end;
+        emit(
+            swath.address_of(index),
+            fresh_byte,
+            own.map_or(MatchFlags::empty(), |(_, flags)| flags),
+        );
     }
-    results
 }
 
 /// Reconstructs the full-width [`Value`] a match's raw `bytes` (as returned by

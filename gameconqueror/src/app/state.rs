@@ -145,6 +145,17 @@ pub struct AppState {
     pub(super) match_sort: MatchSortColumn,
     pub(super) match_filter: String,
     pub(super) match_selected: usize,
+    /// First row of the Match View table on screen; kept by the renderer so the selection
+    /// scrolls like ratatui's own `TableState`.
+    #[cfg_attr(not(feature = "tui"), allow(dead_code))]
+    pub(crate) match_offset: std::cell::Cell<usize>,
+    /// Bumped whenever the session's match set may have changed (scan finished or started,
+    /// attach, detach), so [`Self::refresh_match_view`] knows to rebuild.
+    pub(super) match_generation: u64,
+    /// The filtered and sorted match list, rebuilt only when the generation, filter or sort
+    /// changes: a frame used to decode, filter and sort every match.
+    pub(super) match_view: Vec<MatchView>,
+    pub(super) match_view_key: Option<(u64, MatchSortColumn, String)>,
     /// Every currently tracked match's value as of the most recent scan/refresh — the baseline
     /// [`Self::match_changed_addresses`] is computed against on the *next* one.
     pub(super) match_previous_values: HashMap<usize, Value>,
@@ -208,6 +219,10 @@ impl Default for AppState {
             match_sort: MatchSortColumn::Address,
             match_filter: String::new(),
             match_selected: 0,
+            match_offset: std::cell::Cell::new(0),
+            match_generation: 0,
+            match_view: Vec::new(),
+            match_view_key: None,
             match_previous_values: HashMap::new(),
             match_changed_addresses: HashSet::new(),
             #[cfg(feature = "hex-view")]
@@ -382,11 +397,27 @@ impl AppState {
     }
 
     /// The attached session's current match set, filtered by [`Self::match_filter`] (against the
-    /// hex address or decimal value, case-insensitively) and sorted by [`Self::match_sort`].
-    /// Empty if no session is attached.
-    pub fn filtered_matches(&self) -> Vec<MatchView> {
+    /// hex address or decimal value, case-insensitively) and sorted by [`Self::match_sort`], as of
+    /// the last [`super::update`]. Empty if no session is attached.
+    pub fn filtered_matches(&self) -> &[MatchView] {
+        &self.match_view
+    }
+
+    /// Rebuilds [`Self::filtered_matches`] if the match set, filter or sort changed since the
+    /// last build; called at the end of every [`super::update`].
+    pub(super) fn refresh_match_view(&mut self) {
+        let key = (
+            self.match_generation,
+            self.match_sort,
+            self.match_filter.clone(),
+        );
+        if self.match_view_key.as_ref() == Some(&key) {
+            return;
+        }
+        self.match_view_key = Some(key);
+        self.match_view.clear();
         let Some(session) = &self.session else {
-            return Vec::new();
+            return;
         };
         let mut matches: Vec<MatchView> = session.matches().collect();
 
@@ -399,7 +430,8 @@ impl AppState {
         }
 
         match self.match_sort {
-            MatchSortColumn::Address => matches.sort_by_key(|entry| entry.address),
+            // Already in address order.
+            MatchSortColumn::Address => {}
             // `Value` can't be `Ord` (its float variants are only `PartialOrd`), so sort by its
             // numeric widening instead of the raw value.
             MatchSortColumn::Value => matches.sort_by(|a, b| {
@@ -410,12 +442,12 @@ impl AppState {
             }),
         }
 
-        matches
+        self.match_view = matches;
     }
 
     /// The match currently highlighted in [`Self::filtered_matches`], if any.
     pub fn selected_match(&self) -> Option<MatchView> {
-        self.filtered_matches().into_iter().nth(self.match_selected)
+        self.match_view.get(self.match_selected).cloned()
     }
 
     /// Whether the match at `address` had a different value on the most recent scan/refresh than
@@ -467,6 +499,7 @@ impl AppState {
         let session = Session::attach(pid)?;
         let region_count = session.region_count()?;
         self.session = Some(session);
+        self.match_generation += 1;
         let pid = pid.as_raw_pid() as u32;
         let name = self
             .processes
@@ -482,6 +515,7 @@ impl AppState {
         let session = self.session.as_mut().ok_or(ScanmemError::NotAttached)?;
         session.detach()?;
         self.session = None;
+        self.match_generation += 1;
         self.attached = None;
         self.match_previous_values.clear();
         self.match_changed_addresses.clear();

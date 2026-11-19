@@ -131,7 +131,13 @@ fn value_to_bytes_bytes_and_str_pass_through_unchanged() {
 fn scan_buffer_finds_a_single_equal_to_match() {
     let expr = equal_to_expr("42");
     let bytes = 42i32.to_ne_bytes();
-    let results = scan_buffer_chunk(0x1000, &bytes, &expr, Endianness::Native, usize::MAX);
+    let results = scan_buffer_chunk(
+        0x1000,
+        &bytes,
+        &Probe::new(&expr, Endianness::Native),
+        Endianness::Native,
+        usize::MAX,
+    );
 
     assert_eq!(results.len(), 4);
     assert_eq!(results[0].0, 0x1000);
@@ -146,7 +152,16 @@ fn scan_buffer_finds_a_single_equal_to_match() {
 fn scan_buffer_finds_no_matches() {
     let expr = equal_to_expr("42");
     let bytes = 7i32.to_ne_bytes();
-    assert!(scan_buffer_chunk(0x1000, &bytes, &expr, Endianness::Native, usize::MAX).is_empty());
+    assert!(
+        scan_buffer_chunk(
+            0x1000,
+            &bytes,
+            &Probe::new(&expr, Endianness::Native),
+            Endianness::Native,
+            usize::MAX
+        )
+        .is_empty()
+    );
 }
 
 #[test]
@@ -159,7 +174,13 @@ fn scan_buffer_records_overlapping_matches_at_adjacent_addresses() {
         criterion: ScanCriterion::Value(UserValue::Number(parse_int("0x11").unwrap())),
     };
     let bytes = [0x11u8, 0x11, 0x11];
-    let results = scan_buffer_chunk(0x1000, &bytes, &expr, Endianness::Native, usize::MAX);
+    let results = scan_buffer_chunk(
+        0x1000,
+        &bytes,
+        &Probe::new(&expr, Endianness::Native),
+        Endianness::Native,
+        usize::MAX,
+    );
 
     let addresses: Vec<usize> = results.iter().map(|(address, _, _)| *address).collect();
     assert_eq!(addresses, vec![0x1000, 0x1001, 0x1002]);
@@ -173,16 +194,28 @@ fn scan_buffer_chunk_matches_an_unchunked_scan_across_a_synthetic_boundary() {
     // `scan_buffer` call over the whole buffer finds, with nothing duplicated or dropped.
     let bytes: [u8; 8] = [0xAA, 0xBB, 42, 0, 0, 0, 0xCC, 0xDD];
     let expr = equal_to_expr("42");
-    let reference = scan_buffer_chunk(0, &bytes, &expr, Endianness::Native, usize::MAX);
+    let reference = scan_buffer_chunk(
+        0,
+        &bytes,
+        &Probe::new(&expr, Endianness::Native),
+        Endianness::Native,
+        usize::MAX,
+    );
 
     // Chunk 1 reads its own 4 bytes plus a 3-byte overlap tail (i32's width minus one) so the
     // match starting at offset 2 is fully visible; chunk 2 reads only its own remaining 4 bytes,
     // since offset 4 is the region's actual end here.
-    let mut chunked = scan_buffer_chunk(0, &bytes[0..7], &expr, Endianness::Native, 4);
+    let mut chunked = scan_buffer_chunk(
+        0,
+        &bytes[0..7],
+        &Probe::new(&expr, Endianness::Native),
+        Endianness::Native,
+        4,
+    );
     chunked.extend(scan_buffer_chunk(
         4,
         &bytes[4..8],
-        &expr,
+        &Probe::new(&expr, Endianness::Native),
         Endianness::Native,
         4,
     ));
@@ -195,9 +228,25 @@ fn scan_buffer_chunk_excludes_a_group_starting_at_or_after_keep_before() {
     let expr = equal_to_expr("42");
     let bytes = 42i32.to_ne_bytes();
 
-    assert!(scan_buffer_chunk(0x1000, &bytes, &expr, Endianness::Native, 0).is_empty());
+    assert!(
+        scan_buffer_chunk(
+            0x1000,
+            &bytes,
+            &Probe::new(&expr, Endianness::Native),
+            Endianness::Native,
+            0
+        )
+        .is_empty()
+    );
     assert_eq!(
-        scan_buffer_chunk(0x1000, &bytes, &expr, Endianness::Native, 1).len(),
+        scan_buffer_chunk(
+            0x1000,
+            &bytes,
+            &Probe::new(&expr, Endianness::Native),
+            Endianness::Native,
+            1
+        )
+        .len(),
         4
     );
 }
@@ -210,60 +259,186 @@ fn scan_buffer_chunk_keeps_the_full_filler_tail_of_a_boundary_straddling_match()
     let bytes: [u8; 7] = [0xAA, 0xBB, 42, 0, 0, 0, 0xCC];
     let expr = equal_to_expr("42");
 
-    let results = scan_buffer_chunk(0, &bytes, &expr, Endianness::Native, 4);
+    let results = scan_buffer_chunk(
+        0,
+        &bytes,
+        &Probe::new(&expr, Endianness::Native),
+        Endianness::Native,
+        4,
+    );
 
     let addresses: Vec<usize> = results.iter().map(|(address, _, _)| *address).collect();
     assert_eq!(addresses, vec![2, 3, 4, 5]);
 }
 
-#[test]
-fn batch_entries_end_stops_at_the_first_group_boundary_at_or_after_max_len() {
-    let entries = vec![
-        SwathEntry {
-            old_value: 1,
-            flags: MatchFlags::U8,
-        },
-        SwathEntry {
-            old_value: 2,
-            flags: MatchFlags::U8,
-        },
-        SwathEntry {
-            old_value: 3,
-            flags: MatchFlags::empty(), // filler, continues the group started at index 2
-        },
-        SwathEntry {
-            old_value: 4,
-            flags: MatchFlags::U8,
-        },
-    ];
+/// Narrows a whole swath in one go, `fresh` covering all of it.
+fn narrow_swath(
+    old_swath: &Swath,
+    fresh: &[u8],
+    probe: &Probe<'_>,
+    endianness: Endianness,
+) -> Vec<(usize, u8, MatchFlags)> {
+    let mut results = Vec::new();
+    let mut reach = 0;
+    narrow_entries(
+        old_swath,
+        0..old_swath.entries.len(),
+        fresh,
+        probe,
+        endianness,
+        &mut reach,
+        |address, byte, flags| results.push((address, byte, flags)),
+    );
+    results
+}
 
-    // A max_len of 2 lands mid-group (index 2 is filler for the group starting at index 1), so
-    // the batch must extend to index 3 — the next real group boundary — not stop short of it.
-    assert_eq!(batch_entries_end(&entries, 0, 2), 3);
-    // A max_len that already lands exactly on a group boundary needs no extension.
-    assert_eq!(batch_entries_end(&entries, 0, 1), 1);
+/// A first scan of `bytes` at 0x1000, as a swath.
+fn first_scan_swath(bytes: &[u8], expr: &ScanExpr) -> Swath {
+    let mut store = SwathStore::new();
+    for (address, byte, flags) in scan_buffer_chunk(
+        0x1000,
+        bytes,
+        &Probe::new(expr, Endianness::Native),
+        Endianness::Native,
+        usize::MAX,
+    ) {
+        store.add(address, byte, flags);
+    }
+    store.swaths()[0].clone()
+}
+
+fn i32_equal_to(literal: &str) -> ScanExpr {
+    ScanExpr {
+        data_type: ScanDataType::Integer32,
+        match_type: MatchType::EqualTo,
+        criterion: ScanCriterion::Value(UserValue::Number(parse_int(literal).unwrap())),
+    }
 }
 
 #[test]
-fn batch_entries_end_always_includes_at_least_the_first_whole_group() {
-    let entries = vec![
-        SwathEntry {
-            old_value: 1,
-            flags: MatchFlags::U8,
-        },
-        SwathEntry {
-            old_value: 2,
-            flags: MatchFlags::empty(),
-        },
-        SwathEntry {
-            old_value: 3,
-            flags: MatchFlags::empty(),
-        },
-    ];
+fn narrowing_overlapping_matches_with_the_same_scan_keeps_them_all() {
+    // Every offset of 12 zero bytes holding 4 of them is an i32 = 0 match, and each match's
+    // bytes are also the start of the next one. Narrowing used to test each against a one-byte
+    // window (up to the next match), so an identical second scan kept almost nothing.
+    let bytes = [0u8; 12];
+    let expr = i32_equal_to("0");
+    let swath = first_scan_swath(&bytes, &expr);
+    let first: Vec<(usize, u8, MatchFlags)> = swath
+        .entries
+        .iter()
+        .enumerate()
+        .map(|(i, e)| (swath.address_of(i), e.old_value, e.flags))
+        .collect();
+    assert_eq!(first.iter().filter(|(_, _, f)| !f.is_empty()).count(), 9);
 
-    // max_len of 0 would ask for an empty batch, but the whole 3-entry group starting at index 0
-    // must still come back in full rather than getting split.
-    assert_eq!(batch_entries_end(&entries, 0, 0), 3);
+    let narrowed = narrow_swath(
+        &swath,
+        &bytes,
+        &Probe::new(&expr, Endianness::Native),
+        Endianness::Native,
+    );
+
+    assert_eq!(narrowed, first);
+}
+
+#[test]
+fn narrowing_never_adds_a_width() {
+    // Matched only as a u8 before; now the bytes would also match as u16/u32 = 7.
+    let swath = Swath {
+        first_byte_in_child: 0x1000,
+        entries: vec![
+            SwathEntry {
+                old_value: 7,
+                flags: MatchFlags::U8,
+            },
+            SwathEntry {
+                old_value: 0,
+                flags: MatchFlags::U8,
+            },
+        ],
+    };
+    let mut fresh = 7u32.to_ne_bytes().to_vec();
+    fresh.truncate(2);
+    let expr = ScanExpr {
+        data_type: ScanDataType::AnyInteger,
+        match_type: MatchType::EqualTo,
+        criterion: ScanCriterion::Value(UserValue::Number(parse_int("7").unwrap())),
+    };
+
+    let narrowed = narrow_swath(
+        &swath,
+        &fresh,
+        &Probe::new(&expr, Endianness::Native),
+        Endianness::Native,
+    );
+
+    assert_eq!(narrowed, vec![(0x1000, 7, MatchFlags::U8)]);
+}
+
+#[test]
+fn narrowing_in_chunks_matches_narrowing_in_one_pass() {
+    let mut bytes = vec![0u8; 16];
+    bytes[5..9].copy_from_slice(&0x0102_0304u32.to_ne_bytes());
+    let expr = ScanExpr {
+        data_type: ScanDataType::AnyInteger,
+        match_type: MatchType::Any,
+        criterion: ScanCriterion::None,
+    };
+    let swath = first_scan_swath(&bytes, &expr);
+    let probe = Probe::new(&expr, Endianness::Native);
+    let whole = narrow_swath(&swath, &bytes, &probe, Endianness::Native);
+
+    for split in 1..bytes.len() {
+        let mut chunked = Vec::new();
+        let mut reach = 0;
+        let read_end = (split + probe.window() - 1).min(bytes.len());
+        narrow_entries(
+            &swath,
+            0..split,
+            &bytes[..read_end],
+            &probe,
+            Endianness::Native,
+            &mut reach,
+            |a, b, f| chunked.push((a, b, f)),
+        );
+        narrow_entries(
+            &swath,
+            split..bytes.len(),
+            &bytes[split..],
+            &probe,
+            Endianness::Native,
+            &mut reach,
+            |a, b, f| chunked.push((a, b, f)),
+        );
+        assert_eq!(chunked, whole, "split at {split}");
+    }
+}
+
+#[test]
+fn an_overlapped_match_shows_its_full_value() {
+    // 0x12345678 is an i32 match at 0x1000 and its low bytes are also i8/i16 matches of
+    // their own; the i32's value comes from all four bytes, not up to the next match.
+    let mut session = empty_session();
+    let bytes = 0x1234_5678i32.to_ne_bytes();
+    let expr = ScanExpr {
+        data_type: ScanDataType::AnyInteger,
+        match_type: MatchType::Any,
+        criterion: ScanCriterion::None,
+    };
+    for (address, byte, flags) in scan_buffer_chunk(
+        0x1000,
+        &bytes,
+        &Probe::new(&expr, Endianness::Native),
+        Endianness::Native,
+        usize::MAX,
+    ) {
+        session.matches.add(address, byte, flags);
+    }
+
+    assert_eq!(
+        session.nth_match(0).unwrap().old_value,
+        Value::I32(0x1234_5678)
+    );
 }
 
 #[test]
@@ -291,7 +466,12 @@ fn narrow_swath_keeps_a_match_that_still_equals_the_new_criterion() {
     };
     let fresh = 42i32.to_ne_bytes();
 
-    let results = narrow_swath(&old_swath, &fresh, &equal_to_expr("42"), Endianness::Native);
+    let results = narrow_swath(
+        &old_swath,
+        &fresh,
+        &Probe::new(&equal_to_expr("42"), Endianness::Native),
+        Endianness::Native,
+    );
     assert_eq!(results.len(), 4);
     assert_eq!(results[0].0, 0x1000);
     assert!(!results[0].2.is_empty());
@@ -322,7 +502,12 @@ fn narrow_swath_drops_a_match_that_no_longer_equals_the_new_criterion() {
     };
     let fresh = 7i32.to_ne_bytes();
 
-    let results = narrow_swath(&old_swath, &fresh, &equal_to_expr("42"), Endianness::Native);
+    let results = narrow_swath(
+        &old_swath,
+        &fresh,
+        &Probe::new(&equal_to_expr("42"), Endianness::Native),
+        Endianness::Native,
+    );
     assert!(results.is_empty());
 }
 
@@ -356,9 +541,13 @@ fn session_matches_reconstructs_the_full_width_value_of_a_multi_byte_match() {
         criterion: ScanCriterion::Value(UserValue::Number(parse_int("54276").unwrap())),
     };
     let bytes = 54276i32.to_ne_bytes();
-    for (address, byte, flags) in
-        scan_buffer_chunk(0x1000, &bytes, &expr, Endianness::Native, usize::MAX)
-    {
+    for (address, byte, flags) in scan_buffer_chunk(
+        0x1000,
+        &bytes,
+        &Probe::new(&expr, Endianness::Native),
+        Endianness::Native,
+        usize::MAX,
+    ) {
         session.matches.add(address, byte, flags);
     }
 
@@ -459,4 +648,95 @@ fn scan_on_a_detached_session_fails_with_not_attached() {
 fn attach_to_a_nonexistent_pid_fails() {
     let pid = Pid::from_raw(i32::MAX - 1).expect("pid literal is non-zero");
     assert!(Session::attach(pid).is_err());
+}
+
+#[test]
+fn narrowing_overlapping_string_matches_keeps_them_all() {
+    let bytes = *b"aaa";
+    let expr = ScanExpr {
+        data_type: ScanDataType::String,
+        match_type: MatchType::EqualTo,
+        criterion: ScanCriterion::Value(UserValue::Str("aa".to_owned())),
+    };
+    let swath = first_scan_swath(&bytes, &expr);
+    assert_eq!(
+        swath.entries.iter().filter(|e| !e.flags.is_empty()).count(),
+        2
+    );
+
+    let narrowed = narrow_swath(
+        &swath,
+        &bytes,
+        &Probe::new(&expr, Endianness::Native),
+        Endianness::Native,
+    );
+
+    assert_eq!(narrowed.iter().filter(|(_, _, f)| !f.is_empty()).count(), 2);
+}
+
+/// `scan_buffer_chunk` without the first-byte skip: a full test at every offset.
+fn scan_every_offset(bytes: &[u8], probe: &Probe<'_>) -> Vec<(usize, u8, MatchFlags)> {
+    let mut results = Vec::new();
+    let mut reach = 0usize;
+    for offset in 0..bytes.len() {
+        let own = probe.test(&bytes[offset..], None, Endianness::Native);
+        if own.is_none() && offset >= reach {
+            continue;
+        }
+        if let Some((width, _)) = own {
+            reach = reach.max(offset + width);
+        }
+        results.push((
+            0x1000 + offset,
+            bytes[offset],
+            own.map_or(MatchFlags::empty(), |(_, flags)| flags),
+        ));
+    }
+    results
+}
+
+#[test]
+fn skipping_by_first_byte_finds_what_testing_every_offset_finds() {
+    // Deterministic pseudo-random bytes, with values planted at odd offsets and overlapping.
+    let mut state = 0x2545_f491_4f6c_dd1du64;
+    let mut bytes: Vec<u8> = (0..4096)
+        .map(|_| {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            (state % 7) as u8
+        })
+        .collect();
+    for at in [0usize, 13, 14, 15, 1001, 4090] {
+        bytes[at..at + 4].copy_from_slice(&0x0102_0304i32.to_ne_bytes());
+    }
+    bytes[2000..2008].copy_from_slice(&(-0.0f64).to_ne_bytes());
+    bytes[3000..3004].copy_from_slice(&1.5f32.to_ne_bytes());
+
+    let exprs = [
+        (ScanDataType::Integer32, "16909060"),
+        (ScanDataType::AnyNumber, "16909060"),
+        (ScanDataType::AnyInteger, "3"),
+        (ScanDataType::Integer8, "0"),
+        (ScanDataType::AnyFloat, "0"),
+        (ScanDataType::AnyFloat, "1.5"),
+        (ScanDataType::Integer16, "-1"),
+    ];
+    for (data_type, literal) in exprs {
+        let number = parse_int(literal)
+            .or_else(|_| crate::value::parse_float(literal))
+            .unwrap();
+        let expr = ScanExpr {
+            data_type,
+            match_type: MatchType::EqualTo,
+            criterion: ScanCriterion::Value(UserValue::Number(number)),
+        };
+        let probe = Probe::new(&expr, Endianness::Native);
+        assert!(probe.first_bytes().is_some(), "{data_type:?}");
+        assert_eq!(
+            scan_buffer_chunk(0x1000, &bytes, &probe, Endianness::Native, usize::MAX),
+            scan_every_offset(&bytes, &probe),
+            "{data_type:?} = {literal}"
+        );
+    }
 }

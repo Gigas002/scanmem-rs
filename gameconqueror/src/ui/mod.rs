@@ -17,7 +17,7 @@ mod theme;
 
 use std::io;
 use std::process::ExitCode;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
@@ -115,20 +115,35 @@ pub fn run(state: &mut AppState, settings: &Settings) -> ExitCode {
     }
 }
 
+/// The tick to schedule after the one due at `due` ran at `now`: one `interval` later, or one
+/// `interval` from `now` if the loop fell behind, so missed ticks aren't fired back to back.
+fn next_tick_after(due: Instant, now: Instant, interval: Duration) -> Instant {
+    let next = due + interval;
+    if next <= now { now + interval } else { next }
+}
+
 fn run_event_loop(state: &mut AppState, poll_interval: Duration) -> io::Result<()> {
     let backend = CrosstermBackend::new(io::stdout());
     let mut terminal = Terminal::new(backend)?;
 
+    let mut next_tick = Instant::now() + poll_interval;
     loop {
         terminal.draw(|frame| layout::render(frame, state))?;
 
-        if event::poll(poll_interval)? {
-            if let Event::Key(key) = event::read()? {
-                input::handle_key(state, key);
-            }
-        } else {
+        let timeout = next_tick.saturating_duration_since(Instant::now());
+        if event::poll(timeout)?
+            && let Event::Key(key) = event::read()?
+        {
+            input::handle_key(state, key);
+        }
+
+        // On schedule whether or not keys arrive: a held key used to postpone every tick, and
+        // with it the frozen cheats' rewrites.
+        let now = Instant::now();
+        if now >= next_tick {
             #[cfg(feature = "cheat-list")]
             crate::app::update(state, Msg::Tick);
+            next_tick = next_tick_after(next_tick, now, poll_interval);
         }
 
         if state.is_scanning() {

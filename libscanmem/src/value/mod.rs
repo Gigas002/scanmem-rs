@@ -35,6 +35,23 @@ bitflags! {
 }
 
 /// A single concrete value, e.g. a byte read from target memory or a resolved match.
+impl MatchFlags {
+    /// Bytes spanned by the widest numeric width set: 8, 4, 2, 1, or 0 for none.
+    pub fn max_width(self) -> usize {
+        if self.intersects(Self::I64 | Self::F64) {
+            8
+        } else if self.intersects(Self::I32 | Self::F32) {
+            4
+        } else if self.intersects(Self::I16) {
+            2
+        } else if self.intersects(Self::I8) {
+            1
+        } else {
+            0
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
     U8(u8),

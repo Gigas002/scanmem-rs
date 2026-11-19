@@ -2,8 +2,8 @@
 //! involved, mirroring the intent of `libscanmem`'s and `scanmem`'s own `fake_target` integration
 //! tests.
 //!
-//! Requires `CAP_SYS_PTRACE` (or root, or a permissive
-//! `/proc/sys/kernel/yama/ptrace_scope`) and is therefore `#[ignore]`d by default. Run manually
+//! Spawns real processes, so `#[ignore]`d by default. Needs `ptrace_scope` 0 or 1 (the targets
+//! are this test's children), or `CAP_SYS_PTRACE` above that. Run manually
 //! with:
 //!
 //! ```sh
@@ -50,7 +50,7 @@ fn wait_for_scan(state: &mut AppState) {
 }
 
 #[test]
-#[ignore = "requires CAP_SYS_PTRACE; run manually with `--ignored`"]
+#[ignore = "spawns a target process; run manually with `--ignored`"]
 #[cfg(feature = "cheat-list")]
 fn attach_scan_narrow_write_and_verify_via_target_stdout() {
     // The target now keeps running while attached (only an actual scan briefly pauses it), so it
@@ -162,7 +162,7 @@ fn attach_scan_narrow_write_and_verify_via_target_stdout() {
 }
 
 #[test]
-#[ignore = "requires CAP_SYS_PTRACE; run manually with `--ignored`"]
+#[ignore = "spawns a target process; run manually with `--ignored`"]
 #[cfg(feature = "cheat-list")]
 fn freezing_a_cheat_rewrites_it_on_every_tick() {
     // See the comment in `attach_scan_narrow_write_and_verify_via_target_stdout`: the target
@@ -233,7 +233,7 @@ fn freezing_a_cheat_rewrites_it_on_every_tick() {
 }
 
 #[test]
-#[ignore = "requires CAP_SYS_PTRACE; run manually with `--ignored`"]
+#[ignore = "spawns a target process; run manually with `--ignored`"]
 fn scan_panel_run_scan_first_scan_and_narrow_via_typed_input() {
     // The target now keeps running while attached (only an actual scan briefly pauses it), so
     // its watch loop would otherwise notice this test's `Write` below and exit on its own before
@@ -304,7 +304,7 @@ fn scan_panel_run_scan_first_scan_and_narrow_via_typed_input() {
 }
 
 #[test]
-#[ignore = "requires CAP_SYS_PTRACE; run manually with `--ignored`"]
+#[ignore = "spawns a target process; run manually with `--ignored`"]
 fn scan_panel_new_scan_discards_existing_matches_and_rescans_from_scratch() {
     let mut child = Command::new(fake_target_path())
         .stdout(Stdio::piped())
@@ -357,7 +357,7 @@ fn scan_panel_new_scan_discards_existing_matches_and_rescans_from_scratch() {
 }
 
 #[test]
-#[ignore = "requires CAP_SYS_PTRACE; run manually with `--ignored`"]
+#[ignore = "spawns a target process; run manually with `--ignored`"]
 fn scan_panel_refresh_matches_updates_values_without_dropping_any() {
     let mut child = Command::new(fake_target_path())
         .arg("ffffffff") // keep the target alive regardless of what this test writes
@@ -420,7 +420,7 @@ fn scan_panel_refresh_matches_updates_values_without_dropping_any() {
 }
 
 #[test]
-#[ignore = "requires CAP_SYS_PTRACE; run manually with `--ignored`"]
+#[ignore = "spawns a target process; run manually with `--ignored`"]
 fn match_recently_changed_flags_only_the_refresh_that_actually_changed_a_value() {
     let mut child = Command::new(fake_target_path())
         .arg("ffffffff") // keep the target alive regardless of what this test writes
@@ -485,7 +485,7 @@ fn match_recently_changed_flags_only_the_refresh_that_actually_changed_a_value()
 }
 
 #[test]
-#[ignore = "requires CAP_SYS_PTRACE; run manually with `--ignored`"]
+#[ignore = "spawns a target process; run manually with `--ignored`"]
 #[cfg(feature = "hex-view")]
 fn hex_view_focus_and_commit_edit_writes_a_single_byte() {
     let mut child = Command::new(fake_target_path())

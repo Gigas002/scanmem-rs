@@ -1040,3 +1040,36 @@ fn cheatlist_load_invalid_toml_reports_a_deserialize_error() {
     std::fs::remove_file(&path).expect("cleanup should succeed");
     assert!(matches!(err, cheatlist::CheatListError::Deserialize(_)));
 }
+
+#[test]
+#[ignore = "spawns a target process; run manually with `--ignored`"]
+fn a_panicking_scan_hands_the_session_back_and_the_target_resumes() {
+    // A child of the test process, so Yama lets it be traced.
+    let mut child = std::process::Command::new("sleep")
+        .arg("30")
+        .spawn()
+        .unwrap();
+    let pid = rustix::process::Pid::from_raw(child.id() as i32).unwrap();
+    let mut state = AppState::default();
+    state.attach(pid).expect("attach");
+
+    let status = spawn_scan(&mut state, |_| panic!("boom"));
+    assert_eq!(status.level, StatusLevel::Info);
+    let status = loop {
+        if let Some(status) = poll_scan(&mut state) {
+            break status;
+        }
+        std::thread::yield_now();
+    };
+
+    assert_eq!(status.level, StatusLevel::Error);
+    assert!(status.text.contains("boom"), "{}", status.text);
+    assert!(state.session().is_some());
+    let stat = std::fs::read_to_string(format!("/proc/{}/stat", child.id())).unwrap();
+    let process_state = stat.rsplit_once(')').unwrap().1.trim_start().chars().next();
+    // Not stopped (`t`, traced): resumed by this thread.
+    assert!(matches!(process_state, Some('S' | 'R')), "{stat}");
+    state.detach().expect("detach");
+    child.kill().unwrap();
+    child.wait().unwrap();
+}

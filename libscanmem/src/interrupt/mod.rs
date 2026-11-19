@@ -18,11 +18,17 @@ impl StopFlag {
     }
 
     /// Registers a `SIGINT` handler that sets a freshly created flag — replaces
-    /// `interrupt.c`'s `sig_handler`/signal-registration setup.
+    /// `interrupt.c`'s `sig_handler`/signal-registration setup. A second `SIGINT` while the flag
+    /// is still set terminates the process as usual, so a command that never checks the flag
+    /// can still be interrupted; [`Self::reset`] it once the command is done.
     #[cfg(feature = "signals")]
     pub fn register_sigint() -> std::io::Result<Self> {
+        use signal_hook::consts::SIGINT;
+
         let flag = Self::default();
-        signal_hook::flag::register(signal_hook::consts::SIGINT, Arc::clone(&flag.0))?;
+        // Handlers run in registration order: check for an earlier press, then record this one.
+        signal_hook::flag::register_conditional_default(SIGINT, Arc::clone(&flag.0))?;
+        signal_hook::flag::register(SIGINT, Arc::clone(&flag.0))?;
         Ok(flag)
     }
 

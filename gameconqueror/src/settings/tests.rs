@@ -112,3 +112,33 @@ fn cli_theme_is_carried_through_unparsed() {
 
     std::fs::remove_file(&path).ok();
 }
+
+#[test]
+fn the_default_log_lives_in_the_users_state_directory() {
+    use std::ffi::OsString;
+    use std::path::PathBuf;
+
+    use super::state_dir;
+
+    assert_eq!(
+        state_dir(
+            Some(OsString::from("/xdg/state")),
+            Some(OsString::from("/home/u"))
+        ),
+        PathBuf::from("/xdg/state/gameconqueror")
+    );
+    assert_eq!(
+        state_dir(None, Some(OsString::from("/home/u"))),
+        PathBuf::from("/home/u/.local/state/gameconqueror")
+    );
+    // The XDG spec says to ignore a relative path.
+    assert_eq!(
+        state_dir(Some(OsString::from("rel")), Some(OsString::from("/home/u"))),
+        PathBuf::from("/home/u/.local/state/gameconqueror")
+    );
+    assert!(
+        !Settings::default()
+            .log_file
+            .starts_with(std::env::temp_dir())
+    );
+}

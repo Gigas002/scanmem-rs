@@ -254,6 +254,7 @@ pub fn update(state: &mut AppState, msg: Msg) {
         }
         state.status = Some(status);
     }
+    state.refresh_match_view();
 }
 
 fn attach(state: &mut AppState, pid: u32) -> Status {
@@ -717,10 +718,8 @@ fn new_scan(state: &mut AppState) -> Status {
 /// Stops the target (`Session::prepare_scan`) here, on the caller's thread, *before* handing the
 /// session to the background thread, and only resumes it (`Session::resume_after_scan`) back on
 /// the caller's thread once `Msg::PollScan` sees the result — never inside the background thread
-/// itself. Ptrace ties the tracer relationship to the specific thread that called
-/// `Session::attach` (this one, since attach/detach are never threaded); stopping or resuming
-/// from any other thread would send the signal fine but then hang forever in `waitpid` waiting
-/// for a stop notification only the tracer thread ever receives. `run` itself doesn't touch
+/// itself. Ptrace ties the stopped target to the thread that stopped it, and only that thread
+/// can resume it. `run` itself doesn't touch
 /// ptrace — only `/proc/<pid>/mem`, safe from any thread — so it's the only part actually moved
 /// off this one.
 fn spawn_scan(
@@ -730,6 +729,7 @@ fn spawn_scan(
     let Some(mut session) = state.session.take() else {
         return not_attached(state);
     };
+    state.match_generation += 1;
 
     if let Err(err) = session.prepare_scan() {
         state.session = Some(session);
@@ -740,7 +740,17 @@ fn spawn_scan(
     let stop_flag = session.stop_handle();
     let (tx, rx) = mpsc::channel();
     thread::spawn(move || {
-        let result = run(&mut session);
+        // A panic must still hand the session back: dropped on this thread, it couldn't resume
+        // the target (only the thread that stopped it can), leaving it stopped until exit.
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run(&mut session)))
+            .unwrap_or_else(|panic| {
+                let message = panic
+                    .downcast_ref::<&str>()
+                    .map(|s| (*s).to_owned())
+                    .or_else(|| panic.downcast_ref::<String>().cloned())
+                    .unwrap_or_else(|| "unknown cause".to_owned());
+                Err(std::io::Error::other(format!("the scan panicked: {message}")).into())
+            });
         let _ = tx.send((session, result));
     });
 
@@ -791,6 +801,7 @@ fn poll_scan(state: &mut AppState) -> Option<Status> {
 /// (`Msg::Scan`, `poll_scan`'s `Msg::RunScan`/`Msg::NewScan`/`Msg::RefreshMatches` outcomes), never
 /// mid-scan. A no-op if nothing is attached.
 fn update_match_change_tracking(state: &mut AppState) {
+    state.match_generation += 1;
     let Some(session) = state.session.as_ref() else {
         return;
     };

@@ -572,3 +572,105 @@ fn decode_number_honors_swapped_endianness() {
     let decoded = decode_number(&mem, Endianness::Swapped);
     assert_eq!(decoded.u32, Some(0x0102_0304));
 }
+
+#[test]
+fn increased_and_decreased_by_wrap_instead_of_overflowing() {
+    // 120 + 10 doesn't fit an i8; this panicked in debug builds.
+    assert!(matches_number::<i8>(
+        -126,
+        Some(120),
+        MatchType::IncreasedBy,
+        NumberCriterion::Value(10)
+    ));
+    assert!(!matches_number::<i8>(
+        127,
+        Some(120),
+        MatchType::IncreasedBy,
+        NumberCriterion::Value(10)
+    ));
+    assert!(matches_number::<u8>(
+        250,
+        Some(4),
+        MatchType::DecreasedBy,
+        NumberCriterion::Value(10)
+    ));
+    assert!(matches_number::<u64>(
+        0,
+        Some(u64::MAX),
+        MatchType::IncreasedBy,
+        NumberCriterion::Value(1)
+    ));
+}
+
+/// [`Matcher`]'s shortcuts (the equal-to first-byte table, the match-anything result) must give
+/// what testing every width does, for every data type, both byte orders and edge values.
+#[test]
+fn matcher_shortcuts_agree_with_testing_every_width() {
+    use crate::value::parse_number;
+
+    let values = [
+        "0",
+        "-0",
+        "1",
+        "-1",
+        "255",
+        "-128",
+        "65535",
+        "324508639",
+        "1.5",
+        "-0.0",
+        "nan",
+    ];
+    let mut memory = Vec::new();
+    for text in &values {
+        let number = parse_number(text).unwrap_or_default();
+        for bytes in [
+            number.u8.map(|v| v.to_ne_bytes().to_vec()),
+            number.i16.map(|v| v.to_ne_bytes().to_vec()),
+            number.u32.map(|v| v.to_ne_bytes().to_vec()),
+            number.i64.map(|v| v.to_be_bytes().to_vec()),
+            number.f32.map(|v| v.to_ne_bytes().to_vec()),
+            number.f64.map(|v| v.to_be_bytes().to_vec()),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            memory.extend(bytes);
+            memory.push(0x5a);
+        }
+    }
+    memory.extend([0x80, 0, 0, 0, 0, 0, 0, 0]);
+
+    let data_types = [
+        ScanDataType::AnyNumber,
+        ScanDataType::AnyInteger,
+        ScanDataType::AnyFloat,
+        ScanDataType::Integer8,
+        ScanDataType::Integer16,
+        ScanDataType::Integer32,
+        ScanDataType::Integer64,
+        ScanDataType::Float32,
+        ScanDataType::Float64,
+    ];
+    for endianness in [Endianness::Native, Endianness::Swapped] {
+        for data_type in data_types {
+            for match_type in [MatchType::EqualTo, MatchType::Any] {
+                for text in &values {
+                    let Ok(user) = parse_number(text) else {
+                        continue;
+                    };
+                    let matcher =
+                        Matcher::new(data_type, match_type, endianness, Some(&user), None);
+                    for offset in 0..memory.len() {
+                        let window = &memory[offset..];
+                        assert_eq!(
+                            matcher.test(window, None),
+                            matcher.test_each_width(window, None),
+                            "{data_type:?} {match_type:?} {text} {endianness:?} at {offset}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+}

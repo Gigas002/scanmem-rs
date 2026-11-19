@@ -46,7 +46,8 @@ pkexec env TERM="$TERM" ./target/release/gameconqueror
 | `--theme <PATH>`  | Load colors from this `theme.toml` instead of the conventional `$XDG_CONFIG_HOME/gameconqueror/theme.toml` (`config` feature only).     |
 
 Logs are written to a file only (never stdout/stderr, which would corrupt the terminal frame) —
-by default `$TMPDIR/gameconqueror.log` (configurable via `config.toml`, see below).
+by default `$XDG_STATE_HOME/gameconqueror/gameconqueror.log`, or
+`~/.local/state/gameconqueror/gameconqueror.log` (configurable via `config.toml`, see below).
 
 Colors follow the [`NO_COLOR`](https://no-color.org/) convention (same check as `scanmem`'s CLI):
 set `NO_COLOR=1` to fall back to bold/reverse-video styling instead of ANSI colors, regardless of
@@ -380,8 +381,8 @@ bar reports the write's result (or why it failed, e.g. no process attached).
 
 **Getting a diagnostic log**: gameconqueror never prints to stdout/stderr while the TUI is running
 (`ratatui` owns the terminal), so ordinary output isn't where to look. Instead it writes a
-`tracing` log to `config.toml`'s `log-file` (default `$TMPDIR/gameconqueror.log`, usually
-`/tmp/gameconqueror.log`) at whatever `log-level` you've set (default `warn`; set it to `trace` in
+`tracing` log to `config.toml`'s `log-file` (default `$XDG_STATE_HOME/gameconqueror/gameconqueror.log`,
+usually `~/.local/state/gameconqueror/gameconqueror.log`; under `sudo`, root's) at whatever `log-level` you've set (default `warn`; set it to `trace` in
 `config.toml` for maximum detail while reproducing an issue). It records every attach/detach,
 scan/refresh start and outcome, memory write (address, value, success/failure), and — if
 gameconqueror panics — the panic message itself, so the log survives even if the terminal that ran
