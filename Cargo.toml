@@ -6,7 +6,7 @@ resolver = "3"
 edition = "2024"
 keywords = ["memory", "scanner", "ptrace", "reverse-engineering"]
 repository = "https://github.com/Gigas002/scanmem-rs"
-version = "0.1.0"
+version = "0.2.0"
 
 [workspace.dependencies]
 thiserror = "2"
